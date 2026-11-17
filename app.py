@@ -886,3 +886,27 @@ with tab_report:
         "modelo peor que la persistencia. El Stacking le asigna peso 0, y el Voting hard lo descarta cuando su "
         "predicción es la extrema; el Voting soft, con pesos fijos, conserva su error.",
     )
+
+    heading("nuevos")
+    new_period = load_new_data(train_median)
+    new_true = new_period[TARGET]
+    st.markdown(
+        f"Los modelos se evaluaron **sin reentrenar** en {len(new_period):,} horas posteriores al periodo de estudio "
+        f"({new_period['datetime'].min():%Y-%m-%d} → {new_period['datetime'].max():%Y-%m-%d}), de Shekh y Rafi (2026). "
+        "Los rezagos se calculan con la serie completa, siempre con valores del pasado, y el clima se descarga de "
+        "Open-Meteo con el mismo procedimiento."
+    )
+    new_rows = sorted([(name, *(round(v, 2) for v in metrics(new_true, new_period[col]).values()))
+                       for name, col in TEST_MODELS.items()], key=lambda r: r[1])
+    table(["Modelo", "RMSE", "MAE", "MAPE (%)", "R²"], new_rows, best=0,
+          note="Métricas en MW sobre las horas nuevas. Ningún modelo vio estos datos.")
+    series_chart(new_period.set_index("datetime")[[TARGET, "prediction", "prediction_svr_linear", "prediction_persistence"]]
+                 .resample("D").mean(), "MW (promedio diario)")
+    caption("Demanda real frente al SVR RBF, el SVR lineal y la persistencia en las horas nuevas (promedios diarios).")
+    new_svr = metrics(new_true, new_period["prediction"])
+    callout(
+        "result", "El desempeño se mantiene",
+        f"El SVR RBF obtiene un MAPE de <mark>{new_svr['mape']:.2f}%</mark> en las horas nuevas, incluso menor que en "
+        "Test. El SVR lineal, mediocre en CV, es aquí el mejor: con la tendencia de crecimiento, extrapolar de forma "
+        "lineal favorece a los modelos que no están acotados al rango de entrenamiento.",
+    )
