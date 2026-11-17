@@ -341,3 +341,30 @@ with tab_report:
     table(["Variable", "Faltantes", "%"], RAW_MISSING,
           note="Valores faltantes en el histórico completo: fuentes que empezaron a registrarse tarde. Ninguna es "
                "predictor del modelo de demanda.")
+
+    heading("objetivo")
+    with_shedding = df[df["load_shedding"] >= 50]
+    ratio = (with_shedding[TARGET] - with_shedding["generation_mw"]) / with_shedding["load_shedding"]
+    ratio_by_year = ratio.groupby(with_shedding["datetime"].dt.year).median()
+    st.markdown(
+        "La demanda de PGCB **no es una medición independiente**. En el 84.8% de los registros del histórico completo "
+        "se cumple `demand_mw = generation_mw + load_shedding` (±1 MW). En las horas con cortes, desde 2023 la "
+        "diferencia entre demanda y generación equivale a un factor casi constante sobre el load shedding:"
+    )
+    table(["Año", "(demanda − generación) / load shedding", "Horas"],
+          [(str(year), f"{value:.3f}", int((with_shedding["datetime"].dt.year == year).sum()))
+           for year, value in ratio_by_year.items()],
+          note="Mediana en las horas del periodo de estudio con al menos 50 MW de load shedding.")
+    callout(
+        "warning", "Fuga de información",
+        "Con la generación o el load shedding de la misma hora, un modelo solo tendría que sumarlos. Por eso se "
+        "excluyen todas las variables medidas en la misma hora: generación, load shedding, generación por fuente, "
+        "importaciones y <code>remarks</code>. Solo se usa información disponible el día anterior.",
+    )
+    callout(
+        "tip", "¿Por qué la demanda y no el load shedding?",
+        "Primero se intentó predecir el load shedding. Con variables de la misma hora, el modelo solo reconstruía la "
+        "identidad contable (<i>nowcasting</i>); con 24 h de anticipación, el mejor modelo apenas mejoró a la persistencia "
+        "en validación (279 frente a 294 MW) y no la superó en prueba. La demanda, en cambio, sigue patrones de "
+        "calendario y clima que sí pueden anticiparse, y es la variable que reporta la literatura.",
+    )
