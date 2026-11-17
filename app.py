@@ -534,3 +534,40 @@ with tab_report:
             f"La sensación térmica es la más correlacionada (máximo en {best['Ciudad']}, r = "
             f"{best['apparent_temperature']:.3f}). El promedio nacional queda dentro del rango de las ciudades: promediar "
             "no pierde señal y evita depender del clima de una sola ciudad.")
+
+    heading("pipeline")
+    numeric_features = svr_artifact["numeric_features"]
+    st.markdown(
+        "Decisiones tomadas a partir del EDA:\n"
+        "- **Predictores:** rezagos de 24 y 168 h, calendario y clima de la hora pronosticada. El clima es el observado: "
+        "en operación vendría de un pronóstico meteorológico, así que se supone un pronóstico perfecto.\n"
+        "- **Imputación:** mediana para las numéricas (solo faltan rezagos en ~0.4% de las horas).\n"
+        "- **Escalamiento:** `StandardScaler`, obligatorio para SVR: los kernels dependen de distancias.\n"
+        "- **Codificación:** one-hot para `Hour`, `Month` y `DayOfWeek`.\n"
+        "- **Objetivo:** en SVR, `y` se estandariza con `TransformedTargetRegressor` para que `epsilon` y `C` estén en una "
+        "escala razonable. Las métricas se reportan en MW.\n\n"
+        "Todas las transformaciones se ajustan **solo** con la parte de entrenamiento de cada fold."
+    )
+    
+
+    heading("cv")
+    st.markdown(
+        "`TimeSeriesSplit(n_splits=5, gap=24)`: ventana creciente; cada fold se entrena solo con horas anteriores y "
+        "valida con el bloque siguiente. El `gap` de 24 registros evita que la autocorrelación entre horas contiguas "
+        "infle el desempeño. La referencia principal es la **persistencia de 24 h**: predecir que la demanda será igual "
+        "a la de la misma hora del día anterior. Un modelo solo es útil si la supera."
+    )
+    fold_rows = []
+    for fold, (train_idx, val_idx) in enumerate(TimeSeriesSplit(n_splits=5, gap=24).split(train), start=1):
+        fold_dates = train["datetime"].iloc
+        fold_rows.append((f"Fold {fold}", f"{fold_dates[train_idx[0]]:%Y-%m-%d} → {fold_dates[train_idx[-1]]:%Y-%m-%d}",
+                          len(train_idx), f"{fold_dates[val_idx[0]]:%Y-%m-%d} → {fold_dates[val_idx[-1]]:%Y-%m-%d}",
+                          len(val_idx)))
+    table(["Fold", "Entrenamiento", "Registros", "Validación", "Registros"], fold_rows)
+    REFERENCE_CV = [
+        ("Dummy (media)", 2694.50, 286.88, 2306.09, -1.247),
+        ("Persistencia 24 h", 1153.40, 341.92, 710.68, 0.629),
+    ]
+    table(["Referencia", "RMSE", "RMSE std", "MAE", "R²"], REFERENCE_CV, best=1,
+          note="Promedio de los 5 folds de validación. Métricas en MW. La persistencia es una referencia exigente: "
+               "explica 63% de la varianza sin entrenar nada.")
