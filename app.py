@@ -110,3 +110,122 @@ mark {{ background: var(--nb-mark); color: inherit; padding: 0.05em 0.25em; bord
 .pd-list li {{ margin-bottom: 0.5rem; }}
 </style>
 """)
+
+SECTIONS = [
+    ("introduccion", "Introducción"),
+    ("inspeccion", "Inspección inicial"),
+    ("objetivo", "Variable objetivo y fuga de información"),
+    ("particion", "Limpieza, rezagos y partición"),
+    ("eda", "Análisis exploratorio (Train)"),
+    ("pipeline", "Preprocesamiento"),
+    ("cv", "Validación cruzada y persistencia"),
+    ("lineales", "Modelos lineales y polinomial"),
+    ("kernels", "Comparación de kernels"),
+    ("optimizacion", "Optimización de C y γ"),
+    ("test", "Evaluación final en Test"),
+    ("ensambles", "Ensambles: metodología"),
+    ("ensambles_cv", "Ensambles: validación cruzada"),
+    ("ensambles_test", "Ensambles: Test"),
+    ("nuevos", "Validación con datos nuevos"),
+    ("discusion", "Discusión y estado del arte"),
+    ("conclusiones", "Conclusiones"),
+    ("referencias", "Referencias"),
+]
+LABELS = {
+    TARGET: "Real", "prediction": "SVR RBF", "prediction_persistence": "Persistencia 24 h",
+    "prediction_stacking": "Stacking", "prediction_linear": "Regresión lineal", "prediction_ridge": "Ridge",
+    "prediction_poly": "Polinomial", "prediction_svr_linear": "SVR lineal", "prediction_gb": "Gradient Boosting",
+    "prediction_ada": "AdaBoost", "prediction_voting_simple": "Voting simple", "prediction_voting": "Voting ponderado",
+    "prediction_voting_hard": "Voting hard",
+}
+SERIES = list(LABELS.values())
+figure_count = 0
+
+
+def heading(anchor):
+    number = [a for a, _ in SECTIONS].index(anchor) + 1
+    st.html(f'<h2 class="nb-h2" id="{anchor}"><span>{number}</span>{dict(SECTIONS)[anchor]}</h2>')
+
+
+def callout(kind, label, text):
+    st.html(f'<div class="nb-callout" data-kind="{kind}"><span class="nb-callout-label">{label}</span><p>{text}</p></div>')
+
+
+def caption(text):
+    global figure_count
+    figure_count += 1
+    st.html(f'<p class="nb-caption"><b>Figura {figure_count}.</b> {text}</p>')
+
+
+def table(header, rows, best=None, note=None):
+    def cell(value):
+        return f"{value:,.2f}" if isinstance(value, float) else f"{value:,}" if isinstance(value, int) else value
+
+    head = "".join(f"<th>{h}</th>" for h in header)
+    body = "".join(
+        f'<tr class="{"best" if i == best else ""}">' + "".join(f"<td>{cell(v)}</td>" for v in row) + "</tr>"
+        for i, row in enumerate(rows)
+    )
+    st.html(f'<div style="overflow-x:auto"><table class="nb-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>')
+    if note:
+        st.html(f'<p class="nb-caption">{note}</p>')
+
+
+def metrics(y_true, y_pred):
+    """RMSE, MAE y MAPE en MW y %, y R²; el MAPE es interpretable porque la demanda nunca es cero."""
+    return {
+        "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "mape": float(np.mean(np.abs((y_true - y_pred) / y_true)) * 100),
+        "r2": float(r2_score(y_true, y_pred)),
+    }
+
+
+def series_chart(frame, y_title, height=320):
+    """Serie temporal: el valor real en línea gruesa, los pronósticos en líneas finas y la persistencia punteada."""
+    frame = frame.rename(columns=LABELS)
+    present = [s for s in SERIES if s in frame.columns]
+    long = frame.reset_index().melt(id_vars="datetime", var_name="Serie", value_name="MW")
+    base = alt.Chart(long).encode(
+        x=alt.X("datetime:T", title=None),
+        y=alt.Y("MW:Q", title=y_title, scale=alt.Scale(zero=False)),
+        color=alt.Color("Serie:N", sort=present, scale=alt.Scale(domain=present),
+                        legend=alt.Legend(orient="top", title=None)),
+        tooltip=[alt.Tooltip("datetime:T", title="Fecha"), "Serie:N", alt.Tooltip("MW:Q", format=",.0f")],
+    )
+    real = base.transform_filter(alt.datum.Serie == "Real").mark_line(strokeWidth=2.4)
+    pred = base.transform_filter(alt.datum.Serie != "Real").mark_line(strokeWidth=1.3).encode(
+        strokeDash=alt.condition(alt.datum.Serie == "Persistencia 24 h", alt.value([4, 3]), alt.value([1, 0])))
+    st.altair_chart(alt.layer(real, pred).properties(height=height).interactive(bind_y=False), width="stretch")
+
+
+def bar_chart(frame, x, y, x_title, y_title, height=240, zero=True):
+    chart = alt.Chart(frame).mark_bar().encode(
+        x=alt.X(f"{x}:O", title=x_title, axis=alt.Axis(labelAngle=0)),
+        y=alt.Y(f"{y}:Q", title=y_title, scale=alt.Scale(zero=zero)),
+        tooltip=[x, alt.Tooltip(f"{y}:Q", format=",.1f")],
+    )
+    st.altair_chart(chart.properties(height=height), width="stretch")
+
+
+def fold_chart(folds, height=280):
+    """RMSE de validación por fold: barras agrupadas por modelo."""
+    long = (pd.DataFrame(folds, index=[f"Fold {i}" for i in range(1, 6)]).reset_index(names="Fold")
+            .melt(id_vars="Fold", var_name="Modelo", value_name="RMSE"))
+    st.altair_chart(
+        alt.Chart(long).mark_bar().encode(
+            x=alt.X("Fold:N", title=None, axis=alt.Axis(labelAngle=0)), xOffset="Modelo:N",
+            y=alt.Y("RMSE:Q", title="RMSE de validación (MW)"),
+            color=alt.Color("Modelo:N", sort=list(folds), legend=alt.Legend(orient="top", title=None)),
+            tooltip=["Fold", "Modelo", alt.Tooltip("RMSE:Q", format=",.1f")],
+        ).properties(height=height),
+        width="stretch",
+    )
+
+
+def residuals_by_hour(frame, column):
+    """Residuo medio (real − pronóstico) y RMSE por hora del día."""
+    error = frame[TARGET] - frame[column]
+    hours = frame["datetime"].dt.hour
+    return pd.DataFrame({"Residuo medio": error.groupby(hours).mean(),
+                         "RMSE": error.groupby(hours).apply(lambda e: np.sqrt((e ** 2).mean()))})
