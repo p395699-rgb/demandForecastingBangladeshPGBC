@@ -22,6 +22,8 @@ MAX_MW = {
     "gas": 15000, "liquid_fuel": 10000, "coal": 10000, "hydro": 1000,
     "india_bheramara_hvdc": 2000, "india_tripura": 500, "india_adani": 3000,
 }
+# Rezagos de la demanda: misma hora del día anterior y de la semana anterior (disponibles 24 h antes)
+LAGS = {"demand_lag_24h": 24, "demand_lag_168h": 168}
 
 
 def load_raw():
@@ -40,12 +42,23 @@ def clean(X):
     return X[~invalid].reset_index(drop=True)
 
 
+def hourly_series(X):
+    """Serie horaria de la demanda sobre todo el histórico limpio; los rezagos solo leen valores del pasado."""
+    return X.groupby(X["datetime"].dt.floor("h"))[TARGET].mean()
+
+
+def add_lag_features(df, series):
+    df = df.copy()
+    hour = df["datetime"].dt.floor("h")
+    for name, hours in LAGS.items():
+        df[name] = series.reindex(hour - pd.Timedelta(hours=hours)).to_numpy()
+    return df
+
+
 def main():
-    raw = load_raw()
-    X = clean(raw)
-    print(f"Registros: {len(raw):,} → {len(X):,} tras la limpieza | {X['datetime'].min()} → {X['datetime'].max()}")
-    identity = (X[TARGET] - X["generation_mw"] - X["load_shedding"]).abs() <= 1
-    print(f"demand_mw = generation_mw + load_shedding (±1 MW) en {identity.mean():.1%} de los registros")
+    X = clean(load_raw())
+    lagged = add_lag_features(X[["datetime"]], hourly_series(X))
+    print("Rezagos faltantes en el histórico:", lagged[list(LAGS)].isna().sum().to_dict())
 
 
 if __name__ == "__main__":
