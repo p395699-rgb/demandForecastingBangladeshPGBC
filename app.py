@@ -296,7 +296,7 @@ with st.sidebar:
     items = "".join(f'<li><a href="#{a}">{t}</a></li>' for a, t in SECTIONS)
     st.html(f'<div class="nb-toc-title">Reporte técnico</div><nav class="nb-toc"><ol>{items}</ol></nav>')
 
-tab_product, tab_report = st.tabs(["⚡ Pruébalo", "Reporte técnico"])
+tab_product, tab_report = st.tabs(["Predicción", "Reporte técnico"])
 
 with tab_report:
     st.html("""
@@ -308,3 +308,36 @@ with tab_report:
       <ul class="nb-tags"><li>machine learning</li><li>series de tiempo</li><li>SVR</li><li>ensambles</li><li>scikit-learn</li></ul>
     </header>
     """)
+
+    heading("introduccion")
+    st.markdown(
+        "Cuando la demanda supera a la generación disponible, la Power Grid Company of Bangladesh (PGCB) desconecta "
+        "carga de forma programada: el **load shedding**. Anticipar la demanda del día siguiente es el insumo básico para "
+        "planificar qué centrales despachar, cuánto combustible e importaciones asegurar y cómo distribuir los cortes. "
+        "El objetivo es pronosticar la demanda de cada hora (`demand_mw`, MW) **con 24 h de anticipación**, usando solo "
+        "información disponible el día anterior: un problema de **regresión** supervisada.\n\n"
+        "Flujo: Datos → Inspección → Variable objetivo y fuga → Rezagos y partición → EDA solo en Train → Pipeline → "
+        "Validación cruzada con persistencia → Modelos lineales → SVR → Ensambles → Test → Datos nuevos."
+    )
+    callout(
+        "result", "Resultado",
+        f"El SVR RBF optimizado obtiene en Test un MAPE de <mark>{svr_test['mape']:.2f}%</mark> (RMSE de "
+        f"{svr_test['rmse']:,.0f} MW), frente a {persistence_test['mape']:.2f}% de la persistencia de 24 h: "
+        f"{1 - svr_test['rmse'] / persistence_test['rmse']:.0%} menos error. También fue el mejor en validación "
+        "cruzada (RMSE de 940.61 MW) y mantiene su desempeño en datos posteriores al periodo de estudio.",
+    )
+
+    heading("inspeccion")
+    RAW_MISSING = [("solar", 22133, 23.9), ("wind", 73974, 79.8), ("india_adani", 85312, 92.1),
+                   ("nepal", 87299, 94.2), ("remarks", 86257, 93.1)]
+    st.markdown(
+        "- **Dataset:** PGCB Hourly Generation Dataset (UCI): 92,650 registros horarios y 15 columnas, de 2015-04 a "
+        "2025-06. Se complementa con clima horario de Open-Meteo (promedio de las 8 capitales de división).\n"
+        "- **Objetivo:** `demand_mw`, sin faltantes.\n"
+        "- **Duplicados:** 160 registros completos y 432 marcas de tiempo repetidas.\n"
+        "- **Valores imposibles:** `demand_mw` = 156,050 MW o `generation_mw` = 64,526,500 MW, muy por encima de la "
+        "capacidad de la red (< 17,000 MW)."
+    )
+    table(["Variable", "Faltantes", "%"], RAW_MISSING,
+          note="Valores faltantes en el histórico completo: fuentes que empezaron a registrarse tarde. Ninguna es "
+               "predictor del modelo de demanda.")
