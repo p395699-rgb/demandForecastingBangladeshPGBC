@@ -798,3 +798,66 @@ with tab_report:
         table(["lr", "depth", "n", "subsample", "RMSE val", "RMSE Train"], GB_GRID_TOP, best=0,
               note="Gradient Boosting: mejores de 16 combinaciones. Ganan las configuraciones con menos árboles y una "
                    "tasa de aprendizaje baja.")
+
+    heading("ensambles_cv")
+    ENSEMBLE_CV = [
+        ("SVR RBF optimizado", 940.61, 293.45, 644.60, 0.734, 814.93),
+        ("Voting hard (mediana)", 943.41, 281.60, 663.03, 0.726, 598.84),
+        ("Voting ponderado (1/MSE)", 963.59, 282.21, 685.25, 0.713, 630.59),
+        ("Voting soft (pesos iguales)", 973.71, 280.48, 695.34, 0.706, 616.38),
+        ("Ridge (α=1000)", 1005.35, 288.07, 730.05, 0.702, 873.59),
+        ("Stacking (SVR + GB + AdaBoost)", 1048.57, 334.67, 772.91, 0.612, 683.93),
+        ("Gradient Boosting optimizado", 1075.12, 356.77, 760.95, 0.595, 543.38),
+        ("XGBoost (max_depth=5)", 1110.46, 399.41, 801.56, 0.560, 414.47),
+        ("AdaBoost optimizado", 1127.52, 247.24, 824.20, 0.616, 691.08),
+        ("Persistencia 24 h", 1153.40, 341.92, 710.68, 0.629, "—"),
+        ("Gradient Boosting (por defecto)", 1228.74, 528.24, 875.24, 0.352, 634.40),
+        ("AdaBoost (por defecto)", 1504.42, 406.67, 1167.94, 0.372, 1210.49),
+    ]
+    ENSEMBLE_FOLD_RMSE = {
+        "Persistencia 24 h": [787.2, 1605.0, 827.6, 1509.6, 1037.6],
+        "SVR RBF optimizado": [862.4, 1389.0, 561.8, 1144.7, 745.2],
+        "Gradient Boosting optimizado": [1422.3, 1477.6, 571.1, 1138.9, 765.6],
+        "Stacking": [1434.8, 1373.1, 592.3, 1101.6, 741.0],
+        "Voting hard": [935.2, 1359.0, 541.1, 1116.6, 765.1],
+    }
+    table(["Modelo", "RMSE", "RMSE std", "MAE", "R²", "RMSE Train"], ENSEMBLE_CV, best=0,
+          note="Promedio de los 5 folds de validación. Métricas en MW.")
+    fold_chart(ENSEMBLE_FOLD_RMSE)
+    caption("RMSE por fold de la persistencia y de los mejores modelos. Los folds 2 y 4 validan en primavera y verano, "
+            "cuando la demanda crece rápido con el calor. En el fold 1, entrenado con solo cinco meses, la persistencia "
+            "sigue siendo la mejor opción.")
+    meta_weights = dict(zip(["SVR", "Gradient Boosting", "AdaBoost"], stacking.final_estimator_.coef_))
+    callout(
+        "warning", "Pesos del meta-modelo",
+        " · ".join(f"{name}: <mark>{weight:.2f}</mark>" for name, weight in meta_weights.items())
+        + f" · intercepto: {stacking.final_estimator_.intercept_:,.0f} MW. El meta-modelo favorece a Gradient Boosting "
+        "porque sus predicciones internas vienen de <code>KFold</code>: los modelos base también se entrenan con datos "
+        "posteriores, y Gradient Boosting reproduce bien lo que vio pero extrapola peor. Por eso el Stacking queda por "
+        "detrás de su mejor componente.",
+    )
+    gb_fitted = stacking.named_estimators_["gb"]
+    importances = (
+        pd.Series(gb_fitted.named_steps["model"].feature_importances_,
+                  index=gb_fitted.named_steps["preprocessing"].get_feature_names_out())
+        .sort_values(ascending=False).head(10)
+        .rename(lambda name: name.split("__")[-1])
+        .rename_axis("Variable").rename("Importancia").reset_index()
+    )
+    st.altair_chart(
+        alt.Chart(importances).mark_bar().encode(
+            x=alt.X("Importancia:Q"), y=alt.Y("Variable:N", sort=None, title=None),
+            tooltip=["Variable", alt.Tooltip("Importancia:Q", format=".3f")],
+        ).properties(height=260),
+        width="stretch",
+    )
+    caption("Gradient Boosting optimizado: 10 variables más importantes. El rezago de 24 h concentra casi toda la "
+            "importancia; el resto de la señal viene de la sensación térmica y del rezago semanal.")
+    st.markdown(
+        "- **El SVR RBF es el mejor modelo en CV**, prácticamente empatado con el Voting hard (2.8 MW de diferencia, "
+        "muy por debajo de la desviación entre folds).\n"
+        "- **Los Voting superan a sus componentes de boosting**, pero no al SVR: promediar ayuda cuando los errores son "
+        "distintos, y la mediana descarta la predicción extrema de cada hora.\n"
+        "- **El Stacking queda detrás del SVR** (1,048.57 MW) por la validación interna no temporal.\n"
+        "- **AdaBoost y Gradient Boosting** solo superan a la persistencia después de optimizarse."
+    )
