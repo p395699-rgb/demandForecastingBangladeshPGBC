@@ -29,6 +29,10 @@ LAGS = {"demand_lag_24h": 24, "demand_lag_168h": 168}
 STUDY_YEARS = 3
 # Columnas de contexto: se guardan para el análisis, pero nunca son predictores (se miden en la misma hora)
 CONTEXT = ["generation_mw", "load_shedding"]
+WEATHER_PATH = os.path.join(HERE, "bangladesh_weather_hourly.csv")
+WEATHER_VARS = ["temperature_2m", "relative_humidity_2m", "apparent_temperature", "precipitation", "cloud_cover"]
+TIME_FEATURES = ["Hour", "Hour_sin", "Hour_cos", "DayOfWeek", "Month", "DayOfYear", "IsWeekend"]
+FEATURES = ["datetime", *LAGS, *TIME_FEATURES, *WEATHER_VARS]
 
 
 def load_raw():
@@ -60,12 +64,44 @@ def add_lag_features(df, series):
     return df
 
 
+def add_time_features(df):
+    df = df.copy()
+    df["Hour"] = df["datetime"].dt.hour
+    df["Hour_sin"] = np.sin(2 * np.pi * df["Hour"] / 24.0)
+    df["Hour_cos"] = np.cos(2 * np.pi * df["Hour"] / 24.0)
+    df["DayOfWeek"] = df["datetime"].dt.dayofweek
+    df["Month"] = df["datetime"].dt.month
+    df["DayOfYear"] = df["datetime"].dt.dayofyear
+    # En Bangladesh el fin de semana es viernes y sábado
+    df["IsWeekend"] = df["DayOfWeek"].isin([4, 5]).astype(int)
+    return df
+
+
+def load_weather():
+    return pd.read_csv(WEATHER_PATH, parse_dates=["time"], index_col="time")
+
+
+def add_weather_features(df, weather):
+    """Clima de la hora pronosticada (promedio de las 8 capitales); en operación vendría de un pronóstico."""
+    df = df.copy()
+    hourly_weather = weather.reindex(df["datetime"].dt.floor("h"))
+    for var in WEATHER_VARS:
+        df[var] = hourly_weather[var].to_numpy()
+    return df
+
+
+def build_features(X, series, weather):
+    """Features disponibles el día anterior: rezagos de la demanda, calendario y clima."""
+    features = add_lag_features(X[["datetime"]], series)
+    return add_weather_features(add_time_features(features), weather)[FEATURES]
+
+
 def prepare_data():
     """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
     series = hourly_series(X)
     X = X[X["datetime"] > X["datetime"].max() - pd.DateOffset(years=STUDY_YEARS)].reset_index(drop=True)
-    X_var = add_lag_features(X[["datetime"]], series)
+    X_var = build_features(X, series, load_weather())
     y_var = X[TARGET].copy()
     train_x, test_x, train_y, test_y = train_test_split(X_var, y_var, test_size=0.2, shuffle=False)
     return train_x, test_x, train_y, test_y, X[CONTEXT]
@@ -73,9 +109,9 @@ def prepare_data():
 
 def main():
     train_x, test_x, train_y, test_y, context = prepare_data()
-    print(f"Train: {len(train_x):,} | {train_x['datetime'].min()} → {train_x['datetime'].max()}")
-    print(f"Test:  {len(test_x):,} | {test_x['datetime'].min()} → {test_x['datetime'].max()}")
-    print("Rezagos faltantes:", pd.concat([train_x, test_x])[list(LAGS)].isna().sum().to_dict())
+    print(f"Train: {len(train_x):,} | Test: {len(test_x):,} | Predictores: {FEATURES[1:]}")
+    print("Correlación con la demanda (Train):")
+    print(train_x.drop(columns="datetime").corrwith(train_y).sort_values(key=abs, ascending=False).round(3).to_string())
 
 
 if __name__ == "__main__":
