@@ -291,3 +291,20 @@ train, test = df[df["split"] == "train"], df[df["split"] == "test"]
 y_true = test[TARGET]
 svr_test = metrics(y_true, test["prediction"])
 persistence_test = metrics(y_true, test["prediction_persistence"])
+
+with st.sidebar:
+    items = "".join(f'<li><a href="#{a}">{t}</a></li>' for a, t in SECTIONS)
+    st.html(f'<div class="nb-toc-title">Reporte técnico</div><nav class="nb-toc"><ol>{items}</ol></nav>')
+
+tab_product, tab_report = st.tabs(["⚡ Pruébalo", "Reporte técnico"])
+
+with tab_report:
+    st.html("""
+    <header>
+      <h1 class="nb-title">Pronosticando la demanda eléctrica de Bangladesh con un día de anticipación</h1>
+      <p class="nb-description">Modelos lineales, Support Vector Regression y métodos de ensamble sobre la demanda de días
+      anteriores, el calendario y el clima para pronosticar los MW que requerirá la red nacional en cada hora.</p>
+      <p class="nb-meta"><span>Andrea Rodríguez · 395699</span><span>Universidad Autónoma de Chihuahua</span><span>Machine Learning</span></p>
+      <ul class="nb-tags"><li>machine learning</li><li>series de tiempo</li><li>SVR</li><li>ensambles</li><li>scikit-learn</li></ul>
+    </header>
+    """)
