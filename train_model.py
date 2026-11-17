@@ -13,10 +13,10 @@ import numpy as np
 import pandas as pd
 
 from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
-from sklearn.ensemble import AdaBoostRegressor, GradientBoostingRegressor
+from sklearn.ensemble import AdaBoostRegressor, GradientBoostingRegressor, StackingRegressor, VotingRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, PolynomialFeatures, StandardScaler
 from sklearn.svm import SVR
@@ -51,6 +51,8 @@ BEST_POLY = {"degree": 2, "alpha": 10}
 BEST_C, BEST_GAMMA = 0.1, 0.01
 BEST_GB = {"n_estimators": 100, "learning_rate": 0.05, "max_depth": 5, "subsample": 1.0}
 BEST_ADA = {"n_estimators": 50, "learning_rate": 1.0, "loss": "linear", "max_depth": 6}
+# RMSE de validación cruzada (MW) de cada modelo base optimizado; los pesos del Voting ponderado son ∝ 1/RMSE²
+BASE_CV_RMSE = {"svr": 940.61, "gb": 1075.12, "ada": 1127.52}
 
 
 def load_raw():
@@ -206,6 +208,35 @@ def train_boosting(train_x, test_x, train_y, test_y):
         report(name, test_y, model.fit(train_x, train_y).predict(test_x))
 
 
+def train_stacking(train_x, test_x, train_y, test_y):
+    """Meta-modelo lineal con pesos no negativos; predicciones internas con KFold (igual que en el notebook)."""
+    stacking = StackingRegressor(
+        estimators=make_base_models(),
+        final_estimator=LinearRegression(positive=True),
+        cv=KFold(n_splits=5, shuffle=False),
+        n_jobs=-1,
+    ).fit(train_x, train_y)
+    report("stacking", test_y, stacking.predict(test_x))
+    print("  pesos:", dict(zip(["svr", "gb", "ada"], stacking.final_estimator_.coef_.round(3))))
+    save({"model": stacking, "gb_params": BEST_GB, "ada_params": BEST_ADA}, "stacking.joblib")
+
+
+def voting_weights():
+    inverse_mse = np.array([1 / rmse ** 2 for rmse in BASE_CV_RMSE.values()])
+    return inverse_mse / inverse_mse.sum()
+
+
+def train_voting(train_x, test_x, train_y, test_y):
+    """Voting en regresión: promedio simple o ponderado. El hard (mediana) se calcula en la app con transform()."""
+    simple = VotingRegressor(make_base_models(), n_jobs=-1).fit(train_x, train_y)
+    weighted = VotingRegressor(make_base_models(), weights=voting_weights(), n_jobs=-1).fit(train_x, train_y)
+    for name, voting in [("voting simple", simple), ("voting ponderado", weighted)]:
+        report(name, test_y, voting.predict(test_x))
+    report("voting hard", test_y, np.median(simple.transform(test_x), axis=1))
+    save({"simple": simple, "weighted": weighted, "weights": dict(zip(BASE_CV_RMSE, voting_weights()))},
+         "voting.joblib")
+
+
 def prepare_data():
     """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
@@ -223,6 +254,8 @@ def main():
     train_linear(train_x, test_x, train_y, test_y)
     train_svr(train_x, test_x, train_y, test_y)
     train_boosting(train_x, test_x, train_y, test_y)
+    train_stacking(train_x, test_x, train_y, test_y)
+    train_voting(train_x, test_x, train_y, test_y)
 
     study = pd.concat([
         train_x.assign(**{TARGET: train_y, "split": "train"}),
