@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET = "demand_mw"
 MENDELEY_URL = "https://doi.org/10.17632/vpk8spw2mm.1"
 
-st.set_page_config(page_title="Demanda eléctrica de Bangladesh — pronóstico a 24 h", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="Demanda eléctrica de Bangladesh — pronóstico a 24 h", layout="centered")
 
 tokens = theme_tokens()
 inject_styles(tokens)
@@ -860,3 +860,41 @@ with tab_product:
     <h2 class="pd-h2"><small>La solución</small>Como llegar a un mejor pronóstico</h2>
     {cards("step", SOLUTION_STEPS)}
     """)
+
+    new_period = load_new_data(train_median)
+    new_true = new_period[TARGET]
+    new_svr = metrics(new_true, new_period["prediction"])
+    new_persistence = metrics(new_true, new_period["prediction_persistence"])
+    within_5 = (np.abs(new_true - new_period["prediction"]) / new_true <= 0.05).mean()
+    st.html('<h2 class="pd-h2"><small>La prueba</small>Validación con datos que el modelo no había visto</h2>')
+    st.markdown(
+        f"El modelo se entrenó con datos hasta junio de 2025. Después se evaluó con **{len(new_period):,} horas "
+        f"nuevas**<sup>4</sup>, de {month_year(new_period['datetime'].min())} a {month_year(new_period['datetime'].max())}, "
+        "comparando cada pronóstico con la demanda registrada.",
+        unsafe_allow_html=True,
+    )
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Error medio", f"{new_svr['mape']:.1f}%", help=f"MAPE. Equivale a {new_svr['mae']:,.0f} MW por hora en promedio.")
+    k2.metric("Horas con error < 5%", f"{within_5:.0%}")
+    k3.metric("Menos error que «igual que ayer»", f"{1 - new_svr['rmse'] / new_persistence['rmse']:.0%}",
+              help="Reducción del RMSE frente a la persistencia de 24 h, que repite la demanda del día anterior.")
+    st.html(
+        '<p class="nb-caption">Fuente: <sup>4</sup> Shekh, M. I., &amp; Rafi, R. H. (2026). <i>Hourly Electricity '
+        "Generation, Demand, Load Shedding, and Fuel Mix Dataset for Bangladesh (2015–2026)</i>. Mendeley Data, V1 "
+        f'(CC BY 4.0). <a href="{MENDELEY_URL}" target="_blank" rel="noreferrer">{MENDELEY_URL.removeprefix("https://")}</a>. '
+        "Se usan solo las horas posteriores al periodo de estudio, que ningún modelo vio. El clima de esas horas "
+        "proviene de Open-Meteo.</p>"
+    )
+
+    peak_day = new_period.set_index("datetime")[TARGET].resample("D").mean().idxmax()
+    peak = new_period[new_period["datetime"].dt.normalize() == peak_day]
+    peak_hour = peak.loc[peak[TARGET].idxmax()]
+    st.markdown(
+        f"**Un caso crítico.** El {peak_day.day} de {month_year(peak_day)} fue el día de mayor demanda del periodo nuevo: "
+        f"a las {peak_hour['datetime']:%H:%M} se requirieron **{peak_hour[TARGET]:,.0f} MW**. Un día antes, el modelo "
+        f"pronosticó **{peak_hour['prediction']:,.0f} MW** para esa hora; repetir la demanda del día anterior habría "
+        f"dado {peak_hour['prediction_persistence']:,.0f} MW."
+    )
+    series_chart(peak.set_index("datetime")[[TARGET, "prediction", "prediction_persistence"]], "MW")
+    st.html(f'<p class="nb-caption">Demanda real, pronóstico del modelo y persistencia de 24 h, hora por hora, el '
+            f'{peak_day:%d/%m/%Y}.</p>')
