@@ -229,3 +229,65 @@ def residuals_by_hour(frame, column):
     hours = frame["datetime"].dt.hour
     return pd.DataFrame({"Residuo medio": error.groupby(hours).mean(),
                          "RMSE": error.groupby(hours).apply(lambda e: np.sqrt((e ** 2).mean()))})
+
+
+@st.cache_resource
+def load_artifact(name):
+    return joblib.load(os.path.join(HERE, "model", name))
+
+
+def predict_all(df, train_median):
+    """Agrega una columna por modelo. Los modelos base del Voting dan también las predicciones de GB y AdaBoost."""
+    features = df[FEATURES]
+    linear, voting = load_artifact("linear.joblib"), load_artifact("voting.joblib")
+    base = voting["simple"].transform(features)  # columnas: SVR RBF, Gradient Boosting, AdaBoost
+    return df.assign(
+        prediction=load_artifact("svr_rbf.joblib")["model"].predict(features),
+        prediction_persistence=df["demand_lag_24h"].fillna(train_median),
+        prediction_stacking=load_artifact("stacking.joblib")["model"].predict(features),
+        prediction_linear=linear["linear"].predict(features),
+        prediction_ridge=linear["ridge"].predict(features),
+        prediction_poly=linear["poly"].predict(features),
+        prediction_svr_linear=load_artifact("svr_linear.joblib")["model"].predict(features),
+        prediction_gb=base[:, 1],
+        prediction_ada=base[:, 2],
+        prediction_voting_simple=base.mean(axis=1),
+        prediction_voting=voting["weighted"].predict(features),
+        # Hard voting en regresión: mediana de las predicciones de los tres modelos base
+        prediction_voting_hard=np.median(base, axis=1),
+    )
+
+
+@st.cache_data
+def load_data():
+    df = pd.read_csv(os.path.join(HERE, "data", "study_period.csv"), parse_dates=["datetime"])
+    train_median = float(df.loc[df["split"] == "train", TARGET].median())
+    return predict_all(df, train_median), train_median
+
+
+@st.cache_data
+def load_new_data(train_median):
+    # Horas posteriores al periodo de estudio (jun 2025 – mar 2026); se generan con prepare_new_data.py
+    df = pd.read_csv(os.path.join(HERE, "data", "new_period.csv"), parse_dates=["datetime"])
+    return predict_all(df, train_median)
+
+
+MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+          "noviembre", "diciembre"]
+DAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def month_year(ts):
+    return f"{MONTHS[ts.month - 1]} de {ts.year}"
+
+
+svr_artifact = load_artifact("svr_rbf.joblib")
+model, params = svr_artifact["model"], svr_artifact["params"]
+stacking = load_artifact("stacking.joblib")["model"]
+linear_artifact = load_artifact("linear.joblib")
+voting_artifact = load_artifact("voting.joblib")
+df, train_median = load_data()
+train, test = df[df["split"] == "train"], df[df["split"] == "test"]
+y_true = test[TARGET]
+svr_test = metrics(y_true, test["prediction"])
+persistence_test = metrics(y_true, test["prediction_persistence"])
