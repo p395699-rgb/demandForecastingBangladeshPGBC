@@ -1,6 +1,6 @@
 """Pronóstico de la demanda eléctrica horaria de Bangladesh con 24 h de anticipación.
 
-Prepara los datos del PGCB Hourly Generation Dataset (UCI) y guarda el periodo de estudio con sus features en data/study_period.csv.
+Prepara los datos del PGCB Hourly Generation Dataset (UCI) y entrena los modelos; guarda el periodo de estudio y los artefactos en data/ y model/.
 
 Uso: python train_model.py
 """
@@ -8,14 +8,16 @@ import os
 import zipfile
 import warnings
 
+import joblib
 import numpy as np
 import pandas as pd
 
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder, PolynomialFeatures, StandardScaler
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -40,6 +42,9 @@ FEATURES = ["datetime", *LAGS, *TIME_FEATURES, *WEATHER_VARS]
 RANDOM_STATE = 42
 NUMERIC_FEATURES = [*LAGS, "Hour_sin", "Hour_cos", "DayOfYear", "IsWeekend", *WEATHER_VARS]
 ONEHOT_FEATURES = ["Hour", "Month", "DayOfWeek"]
+# Hiperparámetros elegidos con GridSearchCV en LoadSheddingDemandaAllModels.ipynb (no se buscan aquí)
+BEST_RIDGE_ALPHA = 1000
+BEST_POLY = {"degree": 2, "alpha": 10}
 
 
 def load_raw():
@@ -123,6 +128,36 @@ def persistence(train_y, x):
     return x["demand_lag_24h"].fillna(train_y.median())
 
 
+def make_poly():
+    """Regresión polinomial: PolynomialFeatures solo sobre las numéricas escaladas + Ridge."""
+    poly_preprocessor = ColumnTransformer([
+        ("num", Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("poly", PolynomialFeatures(degree=BEST_POLY["degree"], include_bias=False)),
+        ]), NUMERIC_FEATURES),
+        ("onehot", OneHotEncoder(handle_unknown="ignore"), ONEHOT_FEATURES),
+    ])
+    return Pipeline([("preprocessing", poly_preprocessor), ("model", Ridge(alpha=BEST_POLY["alpha"]))])
+
+
+def save(artifact, name):
+    os.makedirs(os.path.join(HERE, "model"), exist_ok=True)
+    joblib.dump(artifact, os.path.join(HERE, "model", name), compress=3)
+
+
+def train_linear(train_x, test_x, train_y, test_y):
+    models = {
+        "linear": Pipeline([("preprocessing", make_preprocessor()), ("model", LinearRegression())]),
+        "ridge": Pipeline([("preprocessing", make_preprocessor()), ("model", Ridge(alpha=BEST_RIDGE_ALPHA))]),
+        "poly": make_poly(),
+    }
+    for name, model in models.items():
+        model.fit(train_x, train_y)
+        report(name, test_y, model.predict(test_x))
+    save({**models, "ridge_alpha": BEST_RIDGE_ALPHA, "poly_params": BEST_POLY}, "linear.joblib")
+
+
 def prepare_data():
     """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
@@ -137,6 +172,7 @@ def prepare_data():
 def main():
     train_x, test_x, train_y, test_y, context = prepare_data()
     report("persistencia 24 h", test_y, persistence(train_y, test_x))
+    train_linear(train_x, test_x, train_y, test_y)
 
     study = pd.concat([
         train_x.assign(**{TARGET: train_y, "split": "train"}),
