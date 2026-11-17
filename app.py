@@ -368,3 +368,89 @@ with tab_report:
         "en validación (279 frente a 294 MW) y no la superó en prueba. La demanda, en cambio, sigue patrones de "
         "calendario y clima que sí pueden anticiparse, y es la variable que reporta la literatura.",
     )
+
+    heading("particion")
+    st.markdown(
+        "Reglas fijas antes de la partición (no se calculan con los datos, así que no generan fuga de información):\n"
+        "- Eliminación de duplicados y marcas de tiempo repetidas, y orden cronológico.\n"
+        "- Eliminación de 168 registros con valores físicamente imposibles (límites de capacidad por columna).\n"
+        "- **Rezagos:** `demand_lag_24h` (misma hora del día anterior) y `demand_lag_168h` (misma hora de la semana "
+        "anterior), calculados sobre la serie horaria completa y solo con valores del pasado.\n"
+        "- **Periodo de estudio:** últimos 3 años, que reflejan el nivel de demanda y la operación más recientes.\n\n"
+        f"Partición **cronológica** 80/20 (`shuffle=False`): Train con {len(train):,} registros "
+        f"({train['datetime'].min():%Y-%m-%d} → {train['datetime'].max():%Y-%m-%d}) y Test con {len(test):,} "
+        f"({test['datetime'].min():%Y-%m-%d} → {test['datetime'].max():%Y-%m-%d})."
+    )
+    context = (
+        df.set_index("datetime")[[TARGET, "generation_mw"]].resample("D").mean()
+        .rename(columns={TARGET: "Demanda", "generation_mw": "Generación"})
+        .reset_index().melt(id_vars="datetime", var_name="Serie", value_name="MW")
+    )
+    lines = alt.Chart(context).mark_line(strokeWidth=1).encode(
+        x=alt.X("datetime:T", title=None), y=alt.Y("MW:Q", title="MW (promedio diario)", scale=alt.Scale(zero=False)),
+        color=alt.Color("Serie:N", legend=alt.Legend(orient="top", title=None)),
+    )
+    split_rule = alt.Chart(pd.DataFrame({"datetime": [test["datetime"].min()]})).mark_rule(strokeDash=[4, 4]).encode(x="datetime:T")
+    st.altair_chart((lines + split_rule).properties(height=300), width="stretch")
+    caption("Demanda y generación en el periodo de estudio (promedios diarios). La línea punteada marca el inicio de "
+            "Test. La brecha entre ambas es el load shedding.")
+    callout(
+        "warning", "Tendencia y estacionalidad",
+        "La demanda tiene una estacionalidad anual marcada (máximo en verano, mínimo en invierno) y una tendencia de "
+        "crecimiento. Los modelos que no extrapolan, como los árboles, quedan en desventaja frente a esa tendencia.",
+    )
+
+    heading("eda")
+    missing_lags = train[["demand_lag_24h", "demand_lag_168h"]].isna().sum()
+    counts, edges = np.histogram(train[TARGET], bins=40)
+    hist = pd.DataFrame({"MW": edges[:-1].round(0).astype(int), "Frecuencia": counts})
+    st.altair_chart(
+        alt.Chart(hist).mark_bar().encode(x=alt.X("MW:Q", title="demand_mw (MW)"), y="Frecuencia:Q").properties(height=220),
+        width="stretch",
+    )
+    caption(
+        f"Distribución de la demanda en Train: media de {train[TARGET].mean():,.1f} MW, desviación estándar de "
+        f"{train[TARGET].std():,.1f} MW y mediana de {train[TARGET].median():,.1f} MW. Es aproximadamente simétrica y no "
+        f"tiene ceros, por lo que el MAPE es interpretable. Hay {(train[TARGET] < 5000).sum()} horas con demanda menor "
+        "de 5,000 MW (registros anómalos), ninguna en Test."
+    )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        by_hour = train.groupby("Hour")[TARGET].mean().reset_index()
+        bar_chart(by_hour, "Hour", TARGET, "Hora del día", "MW promedio", zero=False)
+    with col_b:
+        by_month = train.groupby("Month")[TARGET].mean().reset_index()
+        bar_chart(by_month, "Month", TARGET, "Mes", "MW promedio", zero=False)
+    caption(f"Demanda promedio por hora y por mes (Train): mínimo a las {by_hour.loc[by_hour[TARGET].idxmin(), 'Hour']:02d}:00 "
+            f"y máximo a las {by_hour.loc[by_hour[TARGET].idxmax(), 'Hour']:02d}:00; mínimo en "
+            f"{MONTHS[by_month.loc[by_month[TARGET].idxmin(), 'Month'] - 1]} y máximo en "
+            f"{MONTHS[by_month.loc[by_month[TARGET].idxmax(), 'Month'] - 1]}. Las relaciones no son monótonas, por lo que "
+            "la hora, el mes y el día de la semana se codifican con one-hot.")
+
+    sample = train.dropna(subset=["demand_lag_24h"]).sample(4000, random_state=42)
+    st.altair_chart(
+        alt.Chart(sample).mark_circle(size=8, opacity=0.3).encode(
+            x=alt.X("demand_lag_24h:Q", title="Demanda 24 h antes (MW)", scale=alt.Scale(zero=False)),
+            y=alt.Y(f"{TARGET}:Q", title="Demanda (MW)", scale=alt.Scale(zero=False)),
+        ).properties(height=260),
+        width="stretch",
+    )
+    caption(f"Demanda frente a la demanda de la misma hora del día anterior (muestra de 4,000 horas de Train). Relación "
+            "casi lineal: los puntos alejados de la diagonal son cambios bruscos entre días (feriados, lluvias) y "
+            f"registros anómalos. Solo {int(missing_lags.max())} horas de Train no tienen rezago y se imputan con la mediana.")
+
+    numeric = [c for c in FEATURES if c not in ("datetime", "Hour", "Month", "DayOfWeek")]
+    corr = train[numeric].corrwith(train[TARGET]).sort_values(key=abs, ascending=False)
+    corr_frame = corr.rename("r").reset_index().rename(columns={"index": "Variable"})
+    st.altair_chart(
+        alt.Chart(corr_frame).mark_bar().encode(
+            x=alt.X("r:Q", title="Correlación de Pearson con demand_mw"),
+            y=alt.Y("Variable:N", sort=None, title=None),
+            tooltip=["Variable", alt.Tooltip("r:Q", format=".3f")],
+        ).properties(height=320),
+        width="stretch",
+    )
+    caption("Correlación con la demanda en Train. El rezago de 24 h es el predictor más informativo, seguido de la "
+            "sensación térmica: el uso de ventiladores y aire acondicionado depende del calor percibido. No se aplica un "
+            "umbral de correlación, porque la hora y el día de la semana tienen relaciones no monótonas.")
