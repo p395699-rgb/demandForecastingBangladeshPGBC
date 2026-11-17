@@ -910,3 +910,50 @@ with tab_report:
         "Test. El SVR lineal, mediocre en CV, es aquí el mejor: con la tendencia de crecimiento, extrapolar de forma "
         "lineal favorece a los modelos que no están acotados al rango de entrenamiento.",
     )
+
+    heading("discusion")
+    SOTA = [
+        ("Chen et al. (2004)", "Demanda máxima diaria (31 días)", "SVR", "EUNITE 2001", "MAPE 1.95%"),
+        ("Islam et al. (2025)", "Demanda horaria", "FB-Prophet, LSTM", "PGCB 2015–2023, clima y economía", "MAPE 2.3%"),
+        ("Miah et al. (2024)", "Demanda horaria", "Bi-LSTM", "PGCB", "MAE 376.72"),
+        ("Akhter et al. (2024)", "Demanda diaria de Dhaka", "CNN + BiLSTM", "Consumo diario 2016–2021", "MAPE 1.64%"),
+        ("Karmakar et al. (2026)", "Demanda pico diaria, día siguiente", "Híbrido RF–Naive", "Bangladesh 2019–2022",
+         "MAPE 5.14%"),
+        ("Este trabajo", "Demanda horaria, 24 h antes", "SVR RBF", "PGCB 2022–2025 y clima",
+         f"MAPE {svr_test['mape']:.2f}%"),
+    ]
+    table(["Autor / Año", "Objetivo", "Modelo", "Dataset", "Resultado"], SOTA, best=len(SOTA) - 1,
+          note="Comparación con el estado del arte. Los estudios difieren en resolución, horizonte, periodo y protocolo.")
+    st.markdown(
+        "- **¿Qué modelo fue el mejor y por qué?** El SVR RBF optimizado, en CV y en Test. Combina una función suave con "
+        "una regularización fuerte: el rezago de 24 h explica la mayor parte de la señal y el SVR la corrige de forma no "
+        "lineal con el calendario y el clima, sin sobreajustar a periodos concretos.\n"
+        "- **Base frente a optimizados:** la optimización mejoró a todos los modelos, y en todos favoreció "
+        "configuraciones más regularizadas (α grande en Ridge, C pequeño en SVR, menos árboles en Gradient Boosting).\n"
+        "- **Características de los datos:** la tendencia de crecimiento favorece a los modelos que extrapolan de forma "
+        "lineal y explica la subestimación del SVR en Test. El calendario no incluye feriados ni el Ramadán.\n"
+        "- **Comparación con la literatura:** el MAPE está en el rango de los estudios revisados y es menor que el de "
+        "Karmakar et al., el único con un protocolo que también evita la fuga de información. Los estudios con menor MAPE "
+        "pronostican datos diarios o periodos cortos y estables; las condiciones no permiten afirmar superioridad.\n"
+        "- **Limitaciones:** el clima observado se usa como pronóstico perfecto; la demanda publicada es una estimación "
+        "construida con la generación y el load shedding; la variación entre folds es grande frente a las diferencias "
+        "entre los mejores modelos; y el Stacking no respeta el orden temporal en su validación interna."
+    )
+
+    heading("conclusiones")
+    st.markdown(
+        "- **Se cumplió el objetivo:** pronosticar la demanda horaria con 24 h de anticipación usando solo información "
+        "disponible el día anterior.\n"
+        f"- **Mejor modelo:** SVR RBF (C = {params['C']}, γ = {params['gamma']}), con MAPE de {svr_test['mape']:.2f}% en "
+        f"Test, {1 - svr_test['rmse'] / persistence_test['rmse']:.0%} menos error que la persistencia, y "
+        f"{new_svr['mape']:.2f}% en datos posteriores.\n"
+        "- **La persistencia es una referencia exigente:** los modelos lineales y los ensambles por defecto no la "
+        "superan.\n"
+        "- **Revisar cómo se construye el objetivo:** la demanda de PGCB equivale casi a generación + load shedding; "
+        "usar variables de la misma hora convierte el pronóstico en una suma.\n"
+        "- **Los ensambles no garantizan una mejora** sobre su mejor componente cuando la validación interna no respeta "
+        "el orden temporal.\n"
+        "- **Trabajo futuro:** pronósticos meteorológicos archivados, feriados y Ramadán, variables de inercia térmica, "
+        "Stacking con validación temporal, pronósticos probabilísticos y combinar la demanda con un pronóstico de la "
+        "generación para anticipar el load shedding."
+    )
