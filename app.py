@@ -756,3 +756,45 @@ with tab_report:
                 .rename(columns={"prediction": "SVR"}).round(1),
                 hide_index=True, width="stretch",
             )
+
+    heading("ensambles")
+    voting_weights = voting_artifact["weights"]
+    ADA_GRID_TOP = [
+        (6, 1.0, "linear", 50, 1127.52, 691.08),
+        (6, 0.1, "linear", 50, 1128.67, 693.58),
+        (6, 0.1, "square", 50, 1149.64, 710.08),
+        (6, 0.1, "linear", 200, 1154.93, 678.01),
+        (3, 0.1, "linear", 200, 1350.57, 1050.45),
+    ]
+    GB_GRID_TOP = [
+        (0.05, 5, 100, 1.0, 1075.12, 543.38),
+        (0.05, 5, 100, 0.8, 1082.51, 538.60),
+        (0.1, 5, 100, 1.0, 1116.61, 454.44),
+        (0.05, 5, 300, 1.0, 1125.41, 393.65),
+        (0.05, 3, 100, 1.0, 1135.30, 696.73),
+    ]
+    st.markdown(
+        "Se reutilizan la partición, el `preprocessor` y los 5 folds, para comparar directamente con el SVR. Los árboles "
+        "no necesitan escalamiento, pero `StandardScaler` no cambia el orden de los valores y no les afecta.\n"
+        "- **AdaBoost** (AdaBoost.R2): entrena árboles de forma secuencial y aumenta el peso de las muestras con mayor "
+        "error. La predicción es la mediana ponderada de los árboles.\n"
+        "- **Gradient Boosting:** F<sub>m</sub>(x) = F<sub>m−1</sub>(x) + ν·h<sub>m</sub>(x); cada árbol se ajusta a los "
+        "residuos del ensamble actual.\n"
+        "- **Stacking:** un meta-modelo `LinearRegression(positive=True)` combina el SVR RBF, el Gradient Boosting y el "
+        "AdaBoost optimizados. Sus predicciones internas se generan con `KFold(5, shuffle=False)`, porque "
+        "`StackingRegressor` no admite `TimeSeriesSplit`; la evaluación externa sigue siendo temporal.\n"
+        "- **Voting:** combina los mismos tres modelos base, sin meta-modelo. **Soft:** media de las predicciones, con "
+        "pesos iguales o **ponderada** por 1/RMSE² de CV (" + " · ".join(
+            f"{name}: {voting_weights[key]:.2f}" for key, name in [("svr", "SVR"), ("gb", "GB"), ("ada", "AdaBoost")])
+        + "). **Hard:** mediana de las tres predicciones.",
+        unsafe_allow_html=True,
+    )
+    st.markdown("**Optimización con `GridSearchCV`** (mismos folds, RMSE como métrica)")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        table(["depth", "lr", "loss", "n", "RMSE val", "RMSE Train"], ADA_GRID_TOP, best=0,
+              note="AdaBoost: mejores de 16 combinaciones. La profundidad del árbol base es lo más importante.")
+    with col_b:
+        table(["lr", "depth", "n", "subsample", "RMSE val", "RMSE Train"], GB_GRID_TOP, best=0,
+              note="Gradient Boosting: mejores de 16 combinaciones. Ganan las configuraciones con menos árboles y una "
+                   "tasa de aprendizaje baja.")
