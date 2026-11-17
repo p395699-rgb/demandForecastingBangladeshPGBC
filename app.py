@@ -571,3 +571,74 @@ with tab_report:
     table(["Referencia", "RMSE", "RMSE std", "MAE", "R²"], REFERENCE_CV, best=1,
           note="Promedio de los 5 folds de validación. Métricas en MW. La persistencia es una referencia exigente: "
                "explica 63% de la varianza sin entrenar nada.")
+
+    heading("lineales")
+    # Resultados de LoadSheddingDemandaAllModels.ipynb (mismo preprocesamiento y mismos folds)
+    LINEAR_CV = [
+        ("Persistencia 24 h", 1153.40, 341.92, 710.68, 0.629, "—"),
+        ("LinearRegression", 1388.95, 810.90, 1037.63, -0.029, 831.75),
+        ("Ridge (α=1)", 1372.84, 782.13, 1024.20, 0.014, 831.78),
+        ("Ridge (α=1000)", 1005.35, 288.07, 730.05, 0.702, 873.59),
+        ("Polinomial grado 2 (α=1)", 1315.42, 816.81, 957.26, 0.030, 713.69),
+        ("Polinomial grado 2 (α=10)", 1234.22, 671.96, 923.39, 0.231, 716.58),
+    ]
+    LINEAR_FOLD_RMSE = {
+        "Persistencia 24 h": [787.2, 1605.0, 827.6, 1509.6, 1037.6],
+        "LinearRegression": [2923.4, 1380.6, 636.8, 1186.3, 817.6],
+        "Ridge (α=1000)": [865.1, 1444.5, 635.8, 1218.6, 862.7],
+        "Polinomial (α=10)": [2463.8, 1369.4, 548.5, 1010.1, 779.3],
+    }
+    RIDGE_GRID = [(0.001, 1388.51), (0.01, 1387.90), (0.1, 1386.41), (1, 1372.84), (10, 1294.23), (100, 1162.71),
+                  (1000, 1005.35), (10000, 1360.03)]
+    POLY_GRID_TOP = [(2, 10, 1234.22, 716.58), (2, 1, 1315.42, 713.69), (2, 1000, 1319.77, 768.24),
+                     (2, 100, 1403.43, 724.29), (3, 1000, 2765.55, 696.98)]
+    st.markdown(
+        "Modelos lineales con el mismo `preprocessor` y los mismos folds, sin escalar `y`:\n"
+        "- **LinearRegression:** minimiza solo la suma de errores al cuadrado.\n"
+        "- **Ridge:** añade la penalización L2 α·Σβ², que estabiliza los coeficientes de predictores correlacionados "
+        "(temperatura y sensación térmica, r = 0.97; los dos rezagos). α se optimizó con `GridSearchCV`.\n"
+        "- **Regresión polinomial:** sigue siendo lineal en los parámetros. `PolynomialFeatures` amplía las numéricas "
+        "escaladas con cuadrados e interacciones (p. ej., temperatura × demanda del día anterior) y se ajusta un Ridge."
+    )
+    table(["Modelo", "RMSE", "RMSE std", "MAE", "R²", "RMSE Train"], LINEAR_CV, best=3,
+          note="Promedio de los 5 folds de validación. Métricas en MW.")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        fold_chart(LINEAR_FOLD_RMSE, height=260)
+    with col_b:
+        ridge_grid = pd.DataFrame(RIDGE_GRID, columns=["alpha", "RMSE"])
+        st.altair_chart(
+            alt.Chart(ridge_grid).mark_line(point=True).encode(
+                x=alt.X("alpha:Q", scale=alt.Scale(type="log"), title="α (escala log)"),
+                y=alt.Y("RMSE:Q", scale=alt.Scale(zero=False), title="RMSE CV (MW)"),
+                tooltip=["alpha", alt.Tooltip("RMSE:Q", format=",.2f")],
+            ).properties(height=260),
+            width="stretch",
+        )
+    caption("Izquierda: RMSE por fold. Las versiones sin regularización fallan en el fold 1, entrenado con solo cinco "
+            "meses. Derecha: RMSE CV de Ridge según α; el mínimo está en α = 1000.")
+    table(["Grado", "α", "RMSE val", "RMSE Train"], POLY_GRID_TOP, best=0,
+          note="Regresión polinomial: mejores combinaciones de grado × α en <code>GridSearchCV</code>. El grado 3 "
+               "sobreajusta de forma extrema (RMSE de validación de hasta 13,158 MW).")
+    ridge_test, poly_test = metrics(y_true, test["prediction_ridge"]), metrics(y_true, test["prediction_poly"])
+    l1, l2, l3 = st.columns(3)
+    l1.metric("MAPE Test Ridge", f"{ridge_test['mape']:.2f}%")
+    l2.metric("MAPE Test Polinomial", f"{poly_test['mape']:.2f}%")
+    l3.metric("MAPE Test Persistencia", f"{persistence_test['mape']:.2f}%")
+    series_chart(test.set_index("datetime")[[TARGET, "prediction_persistence", "prediction_ridge", "prediction_poly"]]
+                 .resample("D").mean(), "MW (promedio diario)")
+    caption(f"Demanda real frente a la persistencia, Ridge (α = {linear_artifact['ridge_alpha']}) y la regresión "
+            f"polinomial (grado {linear_artifact['poly_params']['degree']}, α = {linear_artifact['poly_params']['alpha']}) "
+            "en Test (promedios diarios).")
+    st.markdown(
+        "- **La persistencia gana a todos los lineales sin regularizar:** la regresión lineal tiene R² ≈ 0 en validación "
+        "porque en el fold 1 extrapola mal al invierno siguiente (RMSE de 2,923 MW frente a 787 MW de la persistencia).\n"
+        "- **Ridge con α = 1000 es la mayor mejora por optimización (−27%)** y ya supera a la persistencia en CV.\n"
+        "- **La regresión polinomial ayuda poco:** el grado 2 mejora a la regresión lineal, pero no a Ridge, y el grado 3 "
+        "sobreajusta."
+    )
+    callout(
+        "tip", "Motivación para SVR",
+        "La demanda responde de forma no lineal al calor y a la hora del día. Un kernel RBF modela esas relaciones sin "
+        "elegir a mano qué términos crear, con una respuesta acotada lejos de los datos de entrenamiento.",
+    )
