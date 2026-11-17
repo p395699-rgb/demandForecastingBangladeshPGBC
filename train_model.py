@@ -1,6 +1,6 @@
 """Pronóstico de la demanda eléctrica horaria de Bangladesh con 24 h de anticipación.
 
-Prepara los datos del PGCB Hourly Generation Dataset (UCI) y muestra un resumen de la limpieza.
+Prepara los datos del PGCB Hourly Generation Dataset (UCI) y guarda el periodo de estudio con sus features en data/study_period.csv.
 
 Uso: python train_model.py
 """
@@ -11,7 +11,11 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -33,6 +37,9 @@ WEATHER_PATH = os.path.join(HERE, "bangladesh_weather_hourly.csv")
 WEATHER_VARS = ["temperature_2m", "relative_humidity_2m", "apparent_temperature", "precipitation", "cloud_cover"]
 TIME_FEATURES = ["Hour", "Hour_sin", "Hour_cos", "DayOfWeek", "Month", "DayOfYear", "IsWeekend"]
 FEATURES = ["datetime", *LAGS, *TIME_FEATURES, *WEATHER_VARS]
+RANDOM_STATE = 42
+NUMERIC_FEATURES = [*LAGS, "Hour_sin", "Hour_cos", "DayOfYear", "IsWeekend", *WEATHER_VARS]
+ONEHOT_FEATURES = ["Hour", "Month", "DayOfWeek"]
 
 
 def load_raw():
@@ -96,6 +103,26 @@ def build_features(X, series, weather):
     return add_weather_features(add_time_features(features), weather)[FEATURES]
 
 
+def make_preprocessor():
+    """Imputación con la mediana y escalamiento para las numéricas; one-hot para hora, mes y día de la semana."""
+    return ColumnTransformer([
+        ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]),
+         NUMERIC_FEATURES),
+        ("onehot", OneHotEncoder(handle_unknown="ignore"), ONEHOT_FEATURES),
+    ])
+
+
+def report(name, y_true, y_pred):
+    rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
+    mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+    print(f"{name:<32} RMSE Test {rmse:8.2f} MW | MAPE {mape:5.2f}%")
+
+
+def persistence(train_y, x):
+    """Referencia: la demanda de la misma hora del día anterior (mediana de Train si falta)."""
+    return x["demand_lag_24h"].fillna(train_y.median())
+
+
 def prepare_data():
     """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
@@ -109,9 +136,16 @@ def prepare_data():
 
 def main():
     train_x, test_x, train_y, test_y, context = prepare_data()
-    print(f"Train: {len(train_x):,} | Test: {len(test_x):,} | Predictores: {FEATURES[1:]}")
-    print("Correlación con la demanda (Train):")
-    print(train_x.drop(columns="datetime").corrwith(train_y).sort_values(key=abs, ascending=False).round(3).to_string())
+    report("persistencia 24 h", test_y, persistence(train_y, test_x))
+
+    study = pd.concat([
+        train_x.assign(**{TARGET: train_y, "split": "train"}),
+        test_x.assign(**{TARGET: test_y, "split": "test"}),
+    ]).reset_index(drop=True)
+    study = pd.concat([study, context.reset_index(drop=True)], axis=1)
+    os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
+    study.to_csv(os.path.join(HERE, "data", "study_period.csv"), index=False)
+    print("Guardado: data/study_period.csv")
 
 
 if __name__ == "__main__":
