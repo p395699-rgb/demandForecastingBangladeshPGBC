@@ -898,3 +898,48 @@ with tab_product:
     series_chart(peak.set_index("datetime")[[TARGET, "prediction", "prediction_persistence"]], "MW")
     st.html(f'<p class="nb-caption">Demanda real, pronóstico del modelo y persistencia de 24 h, hora por hora, el '
             f'{peak_day:%d/%m/%Y}.</p>')
+
+    st.html('<h2 class="pd-h2"><small>Simular Nuevos Escenarios</small>Pruebe el modelo con horas reales</h2>')
+    st.markdown("Seleccione horas al azar y compare el pronóstico con lo que efectivamente ocurrió. Ningún caso está "
+                "elegido a mano.")
+    source = st.segmented_control(
+        "Origen de los datos", ["Nuevos datos (jun 2025 – mar 2026)", "Datos Test (nov 2024 – jun 2025)"],
+        default="Nuevos datos (jun 2025 – mar 2026)",
+    )
+    case_source = test if source == "Periodo de prueba (nov 2024 – jun 2025)" else new_period
+    case_a, case_b = st.columns([2, 1])
+    with case_a:
+        n_cases = st.slider("Número de horas", 1, 20, 5)
+    with case_b:
+        if st.button("Generar nuevos casos", type="primary") or "case_seed" not in st.session_state:
+            st.session_state.case_seed = int(np.random.default_rng().integers(1_000_000))
+    cases = case_source.sample(min(n_cases, len(case_source)), random_state=st.session_state.case_seed).sort_values("datetime")
+    case_error = (cases[TARGET] - cases["prediction"]).abs() / cases[TARGET] * 100
+
+    def verdict(error):
+        return "Preciso" if error <= 3 else "Aproximado" if error <= 7 else "Impreciso"
+    
+    table(
+        ["Fecha y hora", "Temperatura", "Demanda real", "Pronóstico", "Error", "Resultado"],
+        [(f"{DAYS[r['datetime'].dayofweek]} {r['datetime']:%d/%m/%Y · %H:%M}", f"{r['temperature_2m']:.0f} °C",
+          f"{r[TARGET]:,.0f} MW", f"{r['prediction']:,.0f} MW", f"{case_error[i]:.1f}%", verdict(case_error[i]))
+         for i, r in cases.iterrows()],
+        note="Preciso: error de hasta 3% · Aproximado: hasta 7% · Impreciso: más de 7%.",
+    )
+    st.markdown(f"En esta muestra, el pronóstico quedó a menos de 3% de la demanda real en "
+                f"**{int((case_error <= 3).sum())} de {len(cases)}** horas.")
+
+    PRODUCT_MODELS = {"SVR RBF (modelo de esta página)": "prediction", "Stacking": "prediction_stacking",
+                      "Voting hard": "prediction_voting_hard", "Voting ponderado": "prediction_voting",
+                      "SVR lineal": "prediction_svr_linear", "Regresión polinomial": "prediction_poly",
+                      "Ridge": "prediction_ridge", "Gradient Boosting": "prediction_gb",
+                      "Persistencia (igual que ayer)": "prediction_persistence"}
+    with st.expander("Comparación con otros modelos"):
+        table(["Modelo", "RMSE", "MAE", "MAPE (%)", "R²"],
+              sorted([(name, *(round(v, 2) for v in metrics(new_true, new_period[col]).values()))
+                      for name, col in PRODUCT_MODELS.items()], key=lambda row: row[1]),
+                                    best=0, note=f"Métricas en MW sobre las {len(new_period):,} horas nuevas. El detalle está en la pestaña "
+                           "Reporte técnico.")
+        series_chart(new_period.set_index("datetime")[[TARGET, "prediction", "prediction_stacking"]].resample("D").mean(),
+                     "MW (promedio diario)")
+
