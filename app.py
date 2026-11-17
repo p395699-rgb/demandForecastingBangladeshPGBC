@@ -642,3 +642,70 @@ with tab_report:
         "La demanda responde de forma no lineal al calor y a la hora del día. Un kernel RBF modela esas relaciones sin "
         "elegir a mano qué términos crear, con una respuesta acotada lejos de los datos de entrenamiento.",
     )
+
+    heading("kernels")
+    KERNEL_CV = [
+        ("Persistencia 24 h", 1153.40, 341.92, 710.68, 0.629, "—"),
+        ("SVR Lineal", 1363.54, 793.42, 978.74, 0.020, 864.69),
+        ("SVR Polinomial", 1726.57, 1549.29, 1269.73, -1.377, 576.25),
+        ("SVR RBF", 1044.34, 381.10, 755.38, 0.608, 567.54),
+    ]
+    KERNEL_FOLD_RMSE = {
+        "Persistencia 24 h": [787.2, 1605.0, 827.6, 1509.6, 1037.6],
+        "SVR Lineal": [2839.2, 1403.7, 593.8, 1211.4, 769.6],
+        "SVR Polinomial": [4749.9, 1550.2, 548.9, 1049.1, 734.7],
+        "SVR RBF": [1394.5, 1532.7, 535.4, 1040.5, 718.6],
+    }
+    st.markdown("Los tres kernels con parámetros por defecto (`C = 1`, `epsilon = 0.1`, `gamma = \"scale\"`, "
+                "`degree = 3`) frente a la persistencia de 24 h.")
+    table(["Modelo", "RMSE", "RMSE std", "MAE", "R²", "RMSE Train"], KERNEL_CV, best=3,
+          note="Promedio de los 5 folds de validación. Métricas en MW.")
+    fold_chart(KERNEL_FOLD_RMSE)
+    caption("RMSE por fold de cada kernel y de la persistencia.")
+    st.markdown(
+        "- **Lineal:** como la regresión lineal, falla en el fold 1 (2,839 MW) y queda peor que la persistencia.\n"
+        "- **Polinomial:** el peor modelo; en el fold 1 su error es seis veces el de la persistencia.\n"
+        "- **RBF:** el único que supera a la persistencia con sus parámetros por defecto; es el kernel que se optimiza."
+    )
+
+    heading("optimizacion")
+    GRID_GAMMAS = ["scale", "0.001", "0.01", "0.1", "1", "10"]
+    GRID_RMSE = {
+        "0.01": [1344.4, 1906.6, 1180.3, 1434.1, 2692.1, 2725.1],
+        "0.1": [1098.4, 1033.4, 940.6, 1159.5, 2445.2, 2716.9],
+        "1": [1044.3, 1008.0, 969.7, 1099.6, 2012.3, 2669.6],
+        "10": [1113.2, 1146.7, 1007.4, 1160.7, 1999.9, 2634.1],
+        "100": [1227.9, 1254.4, 1410.0, 1277.4, 2000.3, 2634.1],
+    }
+    st.markdown(
+        "`GridSearchCV` con los mismos folds y RMSE como métrica. `C` controla el compromiso entre regularización y "
+        "errores fuera del tubo ε; `gamma` define el alcance del kernel exp(−γ‖x − x'‖²)."
+    )
+    grid = pd.DataFrame(GRID_RMSE, index=GRID_GAMMAS).reset_index(names="gamma").melt(id_vars="gamma", var_name="C", value_name="RMSE")
+    base = alt.Chart(grid).encode(
+        x=alt.X("gamma:O", sort=GRID_GAMMAS, title="gamma", axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("C:O", sort=list(GRID_RMSE), title="C"),
+    )
+    heatmap = base.mark_rect().encode(
+        color=alt.Color("RMSE:Q", scale=alt.Scale(scheme="purples", reverse=True), legend=alt.Legend(title="RMSE")),
+        tooltip=["C", "gamma", alt.Tooltip("RMSE:Q", format=",.1f")],
+    )
+    labels = base.mark_text(fontSize=11).encode(
+        text=alt.Text("RMSE:Q", format=",.0f"),
+        color=alt.condition(alt.datum.RMSE < 1300, alt.value("white"), alt.value("black")),
+    )
+    st.altair_chart((heatmap + labels).properties(height=260), width="stretch")
+    caption("RMSE de validación (MW) para cada combinación de C y gamma.")
+    n_support = model.regressor_.named_steps["model"].support_.size
+    callout(
+        "result", "Mejor configuración",
+        f"<mark>C = {params['C']}, gamma = {params['gamma']}</mark>: RMSE CV de 940.61 ± 293.45 MW, MAE de 644.60 MW y "
+        f"R² de 0.734, 10% menos que el RBF por defecto y 18% menos que la persistencia. El modelo reentrenado en todo "
+        f"Train usa {n_support:,} vectores de soporte ({n_support / len(train):.1%} de Train).",
+    )
+    st.markdown(
+        "- **γ:** con γ ≥ 1 el kernel se vuelve demasiado local y el error supera 2,000 MW (sobreajuste).\n"
+        "- **C:** el mínimo está en C = 0.1–1; con C = 100 el error vuelve a subir. Una regularización fuerte generaliza "
+        "mejor entre periodos, porque el rezago de 24 h ya explica la mayor parte de la señal.\n"
+        "- **Interacción:** un γ pequeño necesita un C moderado, por eso se buscan juntos."
+    )
