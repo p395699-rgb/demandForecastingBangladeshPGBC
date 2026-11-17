@@ -957,3 +957,53 @@ with tab_report:
         "Stacking con validación temporal, combinar la demanda con un pronóstico de la "
         "generación para anticipar el load shedding."
     )
+
+    heading("referencias")
+    st.html("""
+    <ol class="nb-refs">
+      <li>Power Grid Company of Bangladesh. <i>PGCB Hourly Generation Dataset (Bangladesh)</i>. UCI Machine Learning
+        Repository, 2025. CC BY 4.0.
+        <a href="https://doi.org/10.24432/C59P6V" target="_blank" rel="noreferrer">doi.org/10.24432/C59P6V</a></li>
+      <li>Shekh, M. I., &amp; Rafi, R. H. (2026). <i>Hourly Electricity Generation, Demand, Load Shedding, and Fuel Mix
+        Dataset for Bangladesh (2015–2026)</i>. Mendeley Data, V1.
+        <a href="https://doi.org/10.17632/vpk8spw2mm.1" target="_blank" rel="noreferrer">doi.org/10.17632/vpk8spw2mm.1</a></li>
+      <li>Zippenfenig, P. (2023). <i>Open-Meteo.com Weather API</i>. Zenodo.
+        <a href="https://doi.org/10.5281/zenodo.7970649" target="_blank" rel="noreferrer">doi.org/10.5281/zenodo.7970649</a></li>
+      <li>World Bank. (2023). <i>Enterprise Surveys: Bangladesh 2022 Country Profile</i>.
+        <a href="https://www.enterprisesurveys.org/content/dam/enterprisesurveys/documents/country/Bangladesh-2022.pdf" target="_blank" rel="noreferrer">enterprisesurveys.org</a></li>
+      <li>IEEFA. (2024). <i>Fixing Bangladesh's Power Sector</i>.
+        <a href="https://ieefa.org/sites/default/files/2024-12/Fixing%20Bangladesh%E2%80%99s%20Power%20Sector_Dec2024.pdf" target="_blank" rel="noreferrer">ieefa.org</a></li>
+      <li>Prothom Alo. (31 de agosto de 2026). <i>Power crisis disrupts healthcare across the country</i>.
+        <a href="https://en.prothomalo.com/bangladesh/9mutm1d1nd" target="_blank" rel="noreferrer">en.prothomalo.com</a></li>
+      <li>Hoerl, A. E., &amp; Kennard, R. W. (1970). Ridge regression: Biased estimation for nonorthogonal problems.
+        <i>Technometrics</i>, 12(1), 55–67.</li>
+      <li>Smola, A. J., &amp; Schölkopf, B. (2004). A tutorial on support vector regression. <i>Statistics and Computing</i>,
+        14(3), 199–222.</li>
+      <li>Chen, B.-J., Chang, M.-W., &amp; Lin, C.-J. (2004). Load forecasting using support vector machines: A study on
+        EUNITE competition 2001. <i>IEEE Transactions on Power Systems</i>, 19(4), 1821–1830.</li>
+      <li>Hong, T., &amp; Fan, S. (2016). Probabilistic electric load forecasting: A tutorial review. <i>International
+        Journal of Forecasting</i>, 32(3), 914–938.</li>
+      <li>Vivas, E., Allende-Cid, H., &amp; Salas, R. (2020). A systematic review of statistical and machine learning
+        methods for electrical power forecasting with reported MAPE score. <i>Entropy</i>, 22(12), 1412.
+        <a href="https://doi.org/10.3390/e22121412" target="_blank" rel="noreferrer">doi.org/10.3390/e22121412</a></li>
+      <li>Islam, Turja, &amp; Habib. (2025). Enhanced power demand forecasting for Bangladesh: using feature engineering
+        associated with environmental and economic impact. <i>Journal of Data, Information and Management</i>.</li>
+      <li>Miah, M. S. U., et al. (2024). Sustainability-driven hourly energy demand forecasting in Bangladesh using
+        Bi-LSTMs. <i>Procedia Computer Science</i>, 236, 41–50.</li>
+      <li>Akhter, K. F. B., et al. (2024). Short-term electricity demand forecasting of Dhaka city using CNN with stacked
+        BiLSTM. arXiv:2406.06651.</li>
+      <li>Karmakar, D. P., et al. (2026). Daily peak demand forecasting in Bangladesh: A leakage-aware comparison of
+        machine learning, deep learning, and a hybrid RF–Naive model. <i>PECCII 2026</i>, 1–6.</li>
+      <li>Drucker, H. (1997). Improving regressors using boosting techniques. <i>Proceedings of the 14th International
+        Conference on Machine Learning (ICML)</i>, 107–115.</li>
+      <li>Friedman, J. H. (2001). Greedy function approximation: A gradient boosting machine. <i>Annals of Statistics</i>,
+        29(5), 1189–1232.</li>
+      <li>Chen, T., &amp; Guestrin, C. (2016). XGBoost: A scalable tree boosting system. <i>Proceedings of the 22nd ACM
+        SIGKDD International Conference on Knowledge Discovery and Data Mining</i>, 785–794.</li>
+      <li>Wolpert, D. H. (1992). Stacked generalization. <i>Neural Networks</i>, 5(2), 241–259.</li>
+      <li>Pedregosa, F., et al. (2011). Scikit-learn: Machine learning in Python. <i>Journal of Machine Learning
+        Research</i>, 12, 2825–2830.</li>
+      <li>scikit-learn developers. <i>Ensembles: Gradient boosting, random forests, bagging, voting, stacking</i>.
+        <a href="https://scikit-learn.org/stable/modules/ensemble.html" target="_blank" rel="noreferrer">scikit-learn.org/stable/modules/ensemble.html</a></li>
+    </ol>
+    """)
