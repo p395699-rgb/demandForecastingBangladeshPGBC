@@ -709,3 +709,50 @@ with tab_report:
         "mejor entre periodos, porque el rezago de 24 h ya explica la mayor parte de la señal.\n"
         "- **Interacción:** un γ pequeño necesita un C moderado, por eso se buscan juntos."
     )
+
+    heading("test")
+    st.markdown("Primer uso de Test. El Pipeline aplica la imputación, el escalamiento y la codificación aprendidos "
+                "con Train.")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("RMSE Test", f"{svr_test['rmse']:,.0f} MW", f"{svr_test['rmse'] - persistence_test['rmse']:+,.0f} vs persistencia",
+              delta_color="inverse")
+    c2.metric("MAE Test", f"{svr_test['mae']:,.0f} MW")
+    c3.metric("MAPE Test", f"{svr_test['mape']:.2f}%", f"{svr_test['mape'] - persistence_test['mape']:+.2f} pp",
+              delta_color="inverse")
+    c4.metric("R² Test", f"{svr_test['r2']:.3f}")
+
+    split_choice = st.segmented_control("Periodo", ["Test", "Train", "Todo"], default="Test", label_visibility="collapsed")
+    subset = {"Test": test, "Train": train, "Todo": df}[split_choice or "Test"]
+    series_chart(subset.set_index("datetime")[[TARGET, "prediction"]].resample("D").mean(), "MW (promedio diario)")
+    caption(f"Demanda real frente al pronóstico del SVR ({split_choice or 'Test'}, promedios diarios).")
+
+    by_hour = residuals_by_hour(test, "prediction")
+    bars = by_hour.reset_index(names="Hora").melt(id_vars="Hora", var_name="Métrica", value_name="MW")
+    st.altair_chart(
+        alt.Chart(bars).mark_bar().encode(
+            x=alt.X("Hora:O", axis=alt.Axis(labelAngle=0)), xOffset="Métrica:N", y=alt.Y("MW:Q"),
+            color=alt.Color("Métrica:N", legend=alt.Legend(orient="top", title=None)),
+            tooltip=["Hora", "Métrica", alt.Tooltip("MW:Q", format=",.1f")],
+        ).properties(height=240),
+        width="stretch",
+    )
+    residual = float((y_true - test["prediction"]).mean())
+    caption(f"RMSE y residuo medio (real − pronóstico) por hora en Test. El residuo es positivo en todas las horas "
+            f"({residual:,.0f} MW en promedio, {residual / y_true.mean():.1%} de la demanda media): el modelo subestima "
+            "ligeramente, sobre todo por la mañana, coherente con la tendencia de crecimiento de la demanda.")
+
+    st.markdown("**Detalle por día**")
+    dates = sorted(df["datetime"].dt.date.unique())
+    day = st.date_input("Día", value=test["datetime"].dt.date.iloc[-1], min_value=dates[0], max_value=dates[-1])
+    hourly = df[df["datetime"].dt.date == day]
+    if hourly.empty:
+        st.info("No hay registros para ese día.")
+    else:
+        series_chart(hourly.set_index("datetime")[[TARGET, "prediction", "prediction_persistence"]], "MW")
+        caption(f"Demanda hora por hora el {day:%d/%m/%Y}, con el pronóstico del SVR y la persistencia de 24 h.")
+        with st.expander("Ver datos del día"):
+            st.dataframe(
+                hourly[["datetime", "demand_lag_24h", "temperature_2m", "apparent_temperature", TARGET, "prediction"]]
+                .rename(columns={"prediction": "SVR"}).round(1),
+                hide_index=True, width="stretch",
+            )
