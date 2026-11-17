@@ -861,3 +861,28 @@ with tab_report:
         "- **El Stacking queda detrás del SVR** (1,048.57 MW) por la validación interna no temporal.\n"
         "- **AdaBoost y Gradient Boosting** solo superan a la persistencia después de optimizarse."
     )
+
+    heading("ensambles_test")
+    TEST_MODELS = {
+        "SVR RBF optimizado": "prediction", "Stacking": "prediction_stacking", "Voting hard": "prediction_voting_hard",
+        "SVR lineal": "prediction_svr_linear", "Polinomial (opt.)": "prediction_poly",
+        "Gradient Boosting (opt.)": "prediction_gb", "Ridge (α=1000)": "prediction_ridge",
+        "Regresión lineal": "prediction_linear", "Voting ponderado": "prediction_voting",
+        "Voting simple": "prediction_voting_simple", "Persistencia 24 h": "prediction_persistence",
+        "AdaBoost (opt.)": "prediction_ada",
+    }
+    rows = [(name, *(round(v, 2) for v in metrics(y_true, test[col]).values())) for name, col in TEST_MODELS.items()]
+    rows.append(("XGBoost (max_depth=5)", 840.63, 572.11, 4.90, 0.86))
+    rows = sorted(rows, key=lambda r: r[1])
+    table(["Modelo", "RMSE", "MAE", "MAPE (%)", "R²"], rows, best=0,
+          note="Métricas en Test (MW), calculadas con los modelos de la app; XGBoost se toma del notebook. Todos los "
+               "modelos excepto AdaBoost superan a la persistencia.")
+    series_chart(test.set_index("datetime")[[TARGET, "prediction", "prediction_stacking", "prediction_voting_hard"]]
+                 .resample("D").mean(), "MW (promedio diario)")
+    caption("Demanda real frente al SVR, el Stacking y el Voting hard en Test (promedios diarios).")
+    callout(
+        "warning", "AdaBoost en Test",
+        f"AdaBoost optimizado obtiene un MAPE de {metrics(y_true, test['prediction_ada'])['mape']:.2f}%, el único "
+        "modelo peor que la persistencia. El Stacking le asigna peso 0, y el Voting hard lo descarta cuando su "
+        "predicción es la extrema; el Voting soft, con pesos fijos, conserva su error.",
+    )
