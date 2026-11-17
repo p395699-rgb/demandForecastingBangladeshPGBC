@@ -11,6 +11,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from sklearn.model_selection import train_test_split
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +26,9 @@ MAX_MW = {
 }
 # Rezagos de la demanda: misma hora del día anterior y de la semana anterior (disponibles 24 h antes)
 LAGS = {"demand_lag_24h": 24, "demand_lag_168h": 168}
+STUDY_YEARS = 3
+# Columnas de contexto: se guardan para el análisis, pero nunca son predictores (se miden en la misma hora)
+CONTEXT = ["generation_mw", "load_shedding"]
 
 
 def load_raw():
@@ -55,10 +60,22 @@ def add_lag_features(df, series):
     return df
 
 
-def main():
+def prepare_data():
+    """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
-    lagged = add_lag_features(X[["datetime"]], hourly_series(X))
-    print("Rezagos faltantes en el histórico:", lagged[list(LAGS)].isna().sum().to_dict())
+    series = hourly_series(X)
+    X = X[X["datetime"] > X["datetime"].max() - pd.DateOffset(years=STUDY_YEARS)].reset_index(drop=True)
+    X_var = add_lag_features(X[["datetime"]], series)
+    y_var = X[TARGET].copy()
+    train_x, test_x, train_y, test_y = train_test_split(X_var, y_var, test_size=0.2, shuffle=False)
+    return train_x, test_x, train_y, test_y, X[CONTEXT]
+
+
+def main():
+    train_x, test_x, train_y, test_y, context = prepare_data()
+    print(f"Train: {len(train_x):,} | {train_x['datetime'].min()} → {train_x['datetime'].max()}")
+    print(f"Test:  {len(test_x):,} | {test_x['datetime'].min()} → {test_x['datetime'].max()}")
+    print("Rezagos faltantes:", pd.concat([train_x, test_x])[list(LAGS)].isna().sum().to_dict())
 
 
 if __name__ == "__main__":
