@@ -13,12 +13,14 @@ import numpy as np
 import pandas as pd
 
 from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
+from sklearn.ensemble import AdaBoostRegressor, GradientBoostingRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, PolynomialFeatures, StandardScaler
 from sklearn.svm import SVR
+from sklearn.tree import DecisionTreeRegressor
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -47,6 +49,8 @@ ONEHOT_FEATURES = ["Hour", "Month", "DayOfWeek"]
 BEST_RIDGE_ALPHA = 1000
 BEST_POLY = {"degree": 2, "alpha": 10}
 BEST_C, BEST_GAMMA = 0.1, 0.01
+BEST_GB = {"n_estimators": 100, "learning_rate": 0.05, "max_depth": 5, "subsample": 1.0}
+BEST_ADA = {"n_estimators": 50, "learning_rate": 1.0, "loss": "linear", "max_depth": 6}
 
 
 def load_raw():
@@ -179,6 +183,29 @@ def train_svr(train_x, test_x, train_y, test_y):
           "params": {"kernel": "rbf", "C": BEST_C, "gamma": BEST_GAMMA}}, "svr_rbf.joblib")
 
 
+def make_base_models():
+    """SVR RBF, Gradient Boosting y AdaBoost optimizados, sin ajustar: los modelos base del Stacking y del Voting."""
+    gb = Pipeline([
+        ("preprocessing", make_preprocessor()),
+        ("model", GradientBoostingRegressor(random_state=RANDOM_STATE, **BEST_GB)),
+    ])
+    ada = Pipeline([
+        ("preprocessing", make_preprocessor()),
+        ("model", AdaBoostRegressor(
+            estimator=DecisionTreeRegressor(max_depth=BEST_ADA["max_depth"]),
+            n_estimators=BEST_ADA["n_estimators"], learning_rate=BEST_ADA["learning_rate"],
+            loss=BEST_ADA["loss"], random_state=RANDOM_STATE,
+        )),
+    ])
+    return [("svr", make_svr(kernel="rbf", C=BEST_C, gamma=BEST_GAMMA)), ("gb", gb), ("ada", ada)]
+
+
+def train_boosting(train_x, test_x, train_y, test_y):
+    """Solo informa su desempeño: la app obtiene sus predicciones desde los modelos base del Voting."""
+    for name, model in make_base_models()[1:]:
+        report(name, test_y, model.fit(train_x, train_y).predict(test_x))
+
+
 def prepare_data():
     """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
@@ -195,6 +222,7 @@ def main():
     report("persistencia 24 h", test_y, persistence(train_y, test_x))
     train_linear(train_x, test_x, train_y, test_y)
     train_svr(train_x, test_x, train_y, test_y)
+    train_boosting(train_x, test_x, train_y, test_y)
 
     study = pd.concat([
         train_x.assign(**{TARGET: train_y, "split": "train"}),
