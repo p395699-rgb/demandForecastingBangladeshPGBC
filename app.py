@@ -454,3 +454,83 @@ with tab_report:
     caption("Correlación con la demanda en Train. El rezago de 24 h es el predictor más informativo, seguido de la "
             "sensación térmica: el uso de ventiladores y aire acondicionado depende del calor percibido. No se aplica un "
             "umbral de correlación, porque la hora y el día de la semana tienen relaciones no monótonas.")
+
+    WEATHER_LABELS = {"apparent_temperature": "Sensación térmica", "temperature_2m": "Temperatura",
+                      "relative_humidity_2m": "Humedad relativa", "cloud_cover": "Nubosidad", "precipitation": "Precipitación"}
+
+    @st.cache_data
+    def load_city_correlations(train_hours, train_target):
+        """Correlación de Pearson entre el clima de cada capital y la demanda en Train (prepare_city_weather.py)."""
+        weather = pd.read_csv(os.path.join(HERE, "data", "weather_by_city.csv"), parse_dates=["time"])
+        target = pd.Series(train_target.to_numpy(), index=train_hours.dt.floor("h").to_numpy(), name=TARGET)
+        rows = []
+        for (city, lat, lon), group in weather.groupby(["city", "latitude", "longitude"]):
+            merged = group.set_index("time").join(target, how="inner")
+            rows.append({"Ciudad": city, "lat": lat, "lon": lon,
+                         **{var: merged[var].corr(merged[TARGET]) for var in WEATHER_LABELS}})
+        return pd.DataFrame(rows)
+
+    st.markdown(
+        "**Variables exógenas: clima de las 8 capitales de división.** Las variables de clima del modelo son el promedio "
+        "simple, hora por hora, de las 8 capitales (Open-Meteo). El mapa muestra la correlación de cada ciudad con la "
+        "demanda nacional en Train."
+    )
+    city_corr = load_city_correlations(train["datetime"], train[TARGET])
+    map_var = st.segmented_control("Variable", list(WEATHER_LABELS), default="apparent_temperature",
+                                   format_func=WEATHER_LABELS.get, key="map_var") or "apparent_temperature"
+    national_r = float(train[map_var].corr(train[TARGET]))
+    r_min, r_max = city_corr[map_var].min(), city_corr[map_var].max()
+    accent = tuple(int(tokens["accent"][i:i + 2], 16) for i in (1, 3, 5))
+    soft = tuple(int(tokens["mark"][i:i + 2], 16) for i in (1, 3, 5))
+    span = (r_max - r_min) or 1
+    city_map = city_corr.assign(
+        r=city_corr[map_var].round(3),
+        color=[[int(s + (a - s) * (r - r_min) / span) for s, a in zip(soft, accent)] + [230] for r in city_corr[map_var]],
+        radius=12000 + 30000 * (city_corr[map_var].abs() / max(city_corr[map_var].abs().max(), 1e-9)),
+    )[["Ciudad", "lat", "lon", "r", "color", "radius"]]
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=[
+                pdk.Layer("ScatterplotLayer", city_map, get_position=["lon", "lat"], get_fill_color="color",
+                          get_radius="radius", get_line_color=[40, 30, 60, 200], line_width_min_pixels=1, stroked=True,
+                          pickable=True),
+                pdk.Layer("TextLayer", city_map, get_position=["lon", "lat"], get_text="Ciudad", get_size=13,
+                          get_color=[110, 100, 130, 255] if tokens is LIGHT else [220, 215, 235, 255],
+                          get_pixel_offset=[0, -22]),
+            ],
+            initial_view_state=pdk.ViewState(latitude=23.8, longitude=90.3, zoom=5.6),
+            tooltip={"text": "{Ciudad}\nr = {r}"},
+            map_style=None,
+        ),
+        height=420,
+    )
+    caption(f"Correlación de {WEATHER_LABELS[map_var].lower()} con la demanda (Train) en cada capital: de "
+            f"{r_min:.3f} a {r_max:.3f}. El promedio nacional que usa el modelo tiene r = {national_r:.3f}. "
+            "El color y el tamaño del círculo indican la magnitud de la correlación.")
+
+    heat = city_corr.melt(id_vars=["Ciudad", "lat", "lon"], var_name="var", value_name="r")
+    heat = pd.concat([heat, pd.DataFrame({"Ciudad": "Promedio nacional", "var": list(WEATHER_LABELS),
+                                          "r": [train[v].corr(train[TARGET]) for v in WEATHER_LABELS]})])
+    heat["Variable"] = heat["var"].map(WEATHER_LABELS)
+    city_order = ["Promedio nacional", *city_corr.sort_values(map_var, ascending=False)["Ciudad"]]
+    heat_base = alt.Chart(heat).encode(
+        x=alt.X("Variable:N", sort=list(WEATHER_LABELS.values()), title=None,
+                axis=alt.Axis(labelAngle=0, orient="top", labelOverlap=False, labelExpr="split(datum.label, ' ')")),
+        y=alt.Y("Ciudad:N", sort=city_order, title=None, axis=alt.Axis(labelLimit=200)),
+    )
+    st.altair_chart(
+        (heat_base.mark_rect().encode(
+            color=alt.Color("r:Q", scale=alt.Scale(scheme="purpleorange", domain=[-0.8, 0.8], reverse=True),
+                            legend=alt.Legend(title="r")),
+            tooltip=["Ciudad", "Variable", alt.Tooltip("r:Q", format=".3f")],
+        ) + heat_base.mark_text(fontSize=11).encode(
+            text=alt.Text("r:Q", format=".2f"),
+            color=alt.condition(alt.datum.r > 0.5, alt.value("white"), alt.value("black")),
+        )).properties(height=300),
+        width="stretch",
+    )
+    best = city_corr.loc[city_corr["apparent_temperature"].idxmax()]
+    caption("Correlación de cada variable de clima con la demanda en Train, por ciudad y para el promedio nacional. "
+            f"La sensación térmica es la más correlacionada (máximo en {best['Ciudad']}, r = "
+            f"{best['apparent_temperature']:.3f}). El promedio nacional queda dentro del rango de las ciudades: promediar "
+            "no pierde señal y evita depender del clima de una sola ciudad.")
