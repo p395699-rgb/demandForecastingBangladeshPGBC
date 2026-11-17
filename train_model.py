@@ -12,12 +12,13 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from sklearn.compose import ColumnTransformer
+from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, PolynomialFeatures, StandardScaler
+from sklearn.svm import SVR
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -45,6 +46,7 @@ ONEHOT_FEATURES = ["Hour", "Month", "DayOfWeek"]
 # Hiperparámetros elegidos con GridSearchCV en LoadSheddingDemandaAllModels.ipynb (no se buscan aquí)
 BEST_RIDGE_ALPHA = 1000
 BEST_POLY = {"degree": 2, "alpha": 10}
+BEST_C, BEST_GAMMA = 0.1, 0.01
 
 
 def load_raw():
@@ -158,6 +160,25 @@ def train_linear(train_x, test_x, train_y, test_y):
     save({**models, "ridge_alpha": BEST_RIDGE_ALPHA, "poly_params": BEST_POLY}, "linear.joblib")
 
 
+def make_svr(**params):
+    """SVR con y estandarizada, para que epsilon y C tengan una escala razonable."""
+    return TransformedTargetRegressor(
+        regressor=Pipeline([("preprocessing", make_preprocessor()), ("model", SVR(cache_size=1000, **params))]),
+        transformer=StandardScaler(),
+    )
+
+
+def train_svr(train_x, test_x, train_y, test_y):
+    svr_linear = make_svr(kernel="linear").fit(train_x, train_y)
+    report("svr lineal", test_y, svr_linear.predict(test_x))
+    save({"model": svr_linear, "params": {"kernel": "linear", "C": 1, "epsilon": 0.1}}, "svr_linear.joblib")
+
+    svr_rbf = make_svr(kernel="rbf", C=BEST_C, gamma=BEST_GAMMA).fit(train_x, train_y)
+    report("svr rbf", test_y, svr_rbf.predict(test_x))
+    save({"model": svr_rbf, "numeric_features": NUMERIC_FEATURES,
+          "params": {"kernel": "rbf", "C": BEST_C, "gamma": BEST_GAMMA}}, "svr_rbf.joblib")
+
+
 def prepare_data():
     """Limpia, calcula los rezagos con todo el histórico, recorta los últimos 3 años y divide 80/20 en orden."""
     X = clean(load_raw())
@@ -173,6 +194,7 @@ def main():
     train_x, test_x, train_y, test_y, context = prepare_data()
     report("persistencia 24 h", test_y, persistence(train_y, test_x))
     train_linear(train_x, test_x, train_y, test_y)
+    train_svr(train_x, test_x, train_y, test_y)
 
     study = pd.concat([
         train_x.assign(**{TARGET: train_y, "split": "train"}),
