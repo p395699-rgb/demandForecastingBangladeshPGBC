@@ -1063,3 +1063,38 @@ with tab_product:
     st.html(f'<p class="nb-caption">Pronóstico del SVR RBF. Como referencia, el Stacking pronostica '
             f'{sim_models["Stacking"][1]:,.0f} MW y el Voting hard {sim_models["Voting hard"][1]:,.0f} MW. El déficit es '
             'una aproximación: la demanda publicada por PGCB ya incluye el load shedding estimado.</p>')
+
+    with st.expander("Pronóstico de todos los modelos"):
+        sim_values = [value for _, value in sim_models.values()]
+        table(["Modelo", "Familia", "Pronóstico", "Diferencia con el SVR"],
+              [(name, family, f"{value:,.0f} MW", f"{value - prediction:+,.0f} MW")
+               for name, (family, value) in sim_models.items()],
+              best=list(sim_models).index("SVR RBF (modelo de esta página)"),
+              note=f"Pronóstico de cada modelo para este escenario. Rango: {min(sim_values):,.0f}–{max(sim_values):,.0f} MW; "
+                   f"mediana: {np.median(sim_values):,.0f} MW.")
+        sim_frame = pd.DataFrame({"Modelo": list(sim_models), "Familia": [f for f, _ in sim_models.values()],
+                                  "MW": sim_values})
+        st.altair_chart(
+            alt.Chart(sim_frame).mark_bar().encode(
+                x=alt.X("MW:Q", title="Demanda pronosticada (MW)", scale=alt.Scale(zero=False)),
+                y=alt.Y("Modelo:N", sort=list(sim_models), title=None),
+                color=alt.Color("Familia:N", legend=alt.Legend(orient="bottom", title=None)),
+                tooltip=["Modelo", "Familia", alt.Tooltip("MW:Q", format=",.0f")],
+            ).properties(height=340),
+            width="stretch",
+        )
+
+    st.html("""
+    <h2 class="pd-h2"><small>Alcance</small>Consideraciones importantes</h2>
+    <ul class="pd-list">
+      <li><b>Necesita el pronóstico del clima.</b> El modelo usa el clima de la hora pronosticada. Aquí se evaluó con el
+      clima observado; en operación se usaría un pronóstico meteorológico, con su propio error.</li>
+      <li><b>No conoce los feriados.</b> En Eid, Ramadán y otros feriados la demanda cambia de forma brusca, y el modelo
+      solo lo nota con un día de retraso.</li>
+      <li><b>La demanda publicada es una estimación.</b> En horas con cortes, PGCB calcula la demanda a partir de la
+      generación y del load shedding; el modelo aprende esa estimación, no el consumo medido.</li>
+      <li><b>Debe reentrenarse periódicamente.</b> La demanda crece año con año; un modelo que no se actualiza tiende a
+      subestimarla.</li>
+    </ul>
+    <p class="pd-text">Encontrarás la metodología completa en la pestaña <b>Reporte técnico</b>.</p>
+    """)
