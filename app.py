@@ -899,8 +899,8 @@ with tab_product:
     st.html(f'<p class="nb-caption">Demanda real, pronóstico del modelo y persistencia de 24 h, hora por hora, el '
             f'{peak_day:%d/%m/%Y}.</p>')
 
-    st.html('<h2 class="pd-h2"><small>Simular Nuevos Escenarios</small>Pruebe el modelo con horas reales</h2>')
-    st.markdown("Seleccione horas al azar y compare el pronóstico con lo que efectivamente ocurrió. Ningún caso está "
+    st.html('<h2 class="pd-h2"><small>Simular Nuevos Escenarios</small>Prueba el modelo con horas reales</h2>')
+    st.markdown("Elige horas al azar y compara el pronóstico con lo que realmente ocurrió. Ningún caso está "
                 "elegido a mano.")
     source = st.segmented_control(
         "Origen de los datos", ["Nuevos datos (jun 2025 – mar 2026)", "Datos Test (nov 2024 – jun 2025)"],
@@ -943,3 +943,123 @@ with tab_product:
         series_chart(new_period.set_index("datetime")[[TARGET, "prediction", "prediction_stacking"]].resample("D").mean(),
                      "MW (promedio diario)")
 
+
+    st.html('<h2 class="pd-h2"><small>Simulador</small>Evalúa tus propios escenarios</h2>')
+    st.markdown("Elige un escenario o ajusta los controles: con la demanda reciente y el clima previsto, ¿cuánta "
+                "electricidad se necesitará a esa hora? Si indicas la generación disponible, verás si alcanzaría.")
+    # Cada escenario es la mediana de las horas de Train que cumplen su condición; top = (variable, cuantil) se queda
+    # solo con las horas de ese cuantil en adelante (p. ej., las más calurosas o las más lluviosas)
+    SCENARIO_RULES = {
+        "Día típico": {"rule": "Todas las horas de Train", "query": None, "hour": 12, "month": 4},
+        "Noche de verano": {"rule": "Junio a las 21:00", "query": "Month == 6 and Hour == 21", "hour": 21, "month": 6},
+        "Tarde de calor": {"rule": "Mayo a las 15:00, el 25% de horas con mayor sensación térmica",
+                           "query": "Month == 5 and Hour == 15", "hour": 15, "month": 5,
+                           "top": ("apparent_temperature", 0.75)},
+        "Día lluvioso": {"rule": "Julio de 12:00 a 16:00, el 10% de horas con más lluvia",
+                         "query": "Month == 7 and 12 <= Hour <= 16", "hour": 14, "month": 7,
+                         "top": ("precipitation", 0.90)},
+        "Mañana de invierno": {"rule": "Enero a las 08:00", "query": "Month == 1 and Hour == 8", "hour": 8, "month": 1},
+    }
+    SCENARIO_DAY = 2  # miércoles, un día laborable, en todos los escenarios
+
+    def scenario_values(spec):
+        """Mediana de las horas de Train del escenario, redondeada al paso de cada control."""
+        hours = train.query(spec["query"]) if spec["query"] else train
+        if "top" in spec:
+            column, quantile = spec["top"]
+            hours = hours[hours[column] >= hours[column].quantile(quantile)]
+        m = hours.median(numeric_only=True)
+
+        def mw(v):
+            return int(np.clip(round(v / 50) * 50, 6000, 18000))
+
+        def half(v, low, high):
+            return float(np.clip(round(v * 2) / 2, low, high))
+
+        values = (mw(m["demand_lag_24h"]), mw(m["demand_lag_168h"]), half(m["temperature_2m"], 10, 40),
+                  half(m["apparent_temperature"], 10, 50), int(round(m["relative_humidity_2m"])),
+                  half(m["precipitation"], 0, 20), int(round(m["cloud_cover"])), spec["hour"], spec["month"],
+                  SCENARIO_DAY, mw(m["generation_mw"]))
+        return values, len(hours)
+
+    scenario_data = {name: scenario_values(spec) for name, spec in SCENARIO_RULES.items()}
+    scenarios = {name: values for name, (values, _) in scenario_data.items()}
+    sim_keys = ["sim_lag24", "sim_lag168", "sim_temp", "sim_apparent", "sim_humidity", "sim_rain", "sim_cloud",
+                "sim_hour", "sim_month", "sim_day", "sim_generation"]
+
+    def apply_scenario():
+        chosen = st.session_state.get("sim_scenario")
+        if chosen:
+            st.session_state.update(dict(zip(sim_keys, scenarios[chosen])))
+
+    for key, value in zip(sim_keys, scenarios["Día típico"]):
+        st.session_state.setdefault(key, value)
+    st.segmented_control("Escenario", list(scenarios), key="sim_scenario", on_change=apply_scenario,
+                         label_visibility="collapsed")
+    with st.popover("¿Cómo se calculan los escenarios?"):
+        st.markdown(
+            "Cada escenario es la **mediana de las horas reales de Train** que cumplen su condición: demanda de ayer y "
+            "de hace una semana, clima y generación disponible. La hora y el mes son los de la condición, y el día es "
+            "siempre miércoles (laborable). Los valores se redondean al paso de cada control."
+        )
+        table(["Escenario", "Horas de Train usadas", "Horas", "Demanda ayer", "Sensación térmica", "Lluvia",
+               "Generación"],
+              [(name, SCENARIO_RULES[name]["rule"], count, f"{v[0]:,} MW", f"{v[3]:.1f} °C", f"{v[5]:.1f} mm",
+                f"{v[10]:,} MW") for name, (v, count) in scenario_data.items()],
+              note="Solo se usan datos de Train, los mismos con los que se entrenó el modelo. La lluvia es el "
+                   "promedio de las 8 capitales, por eso es menor que la de una sola ciudad.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        lag24 = st.slider("Demanda ayer a la misma hora (MW)", 6000, 18000, step=50, key="sim_lag24")
+        lag168 = st.slider("Demanda hace una semana a la misma hora (MW)", 6000, 18000, step=50, key="sim_lag168")
+        hour = st.slider("Hora del día", 0, 23, key="sim_hour")
+        month = st.slider("Mes", 1, 12, key="sim_month")
+        day = st.selectbox("Día de la semana", range(7), format_func=lambda d: DAYS[d].capitalize(), key="sim_day")
+        generation = st.slider("Generación disponible prevista (MW)", 6000, 18000, step=50, key="sim_generation")
+    with col_b:
+        temperature = st.slider("Temperatura (°C)", 10.0, 40.0, step=0.5, key="sim_temp")
+        apparent = st.slider("Sensación térmica (°C)", 10.0, 50.0, step=0.5, key="sim_apparent")
+        humidity = st.slider("Humedad relativa (%)", 20, 100, key="sim_humidity")
+        rain = st.slider("Precipitación (mm)", 0.0, 20.0, step=0.5, key="sim_rain")
+        cloud = st.slider("Nubosidad (%)", 0, 100, key="sim_cloud")
+
+    # Fecha de 2024 con el mes y el día de la semana elegidos; add_time_features deriva el resto del calendario
+    first = pd.Timestamp(2024, month, 1)
+    date = first + pd.Timedelta(days=(day - first.dayofweek) % 7, hours=hour)
+    row = add_time_features(pd.DataFrame({"datetime": [date]}))
+    row = row.assign(demand_lag_24h=lag24, demand_lag_168h=lag168, temperature_2m=temperature,
+                     apparent_temperature=apparent, relative_humidity_2m=humidity, precipitation=rain,
+                     cloud_cover=cloud)[FEATURES]
+    prediction = float(model.predict(row)[0])
+    base_row = voting_artifact["simple"].transform(row)[0]  # SVR RBF, Gradient Boosting, AdaBoost
+    sim_models = {
+        "Persistencia (igual que ayer)": ("Referencia", float(lag24)),
+        "Regresión lineal": ("Lineal", float(linear_artifact["linear"].predict(row)[0])),
+        "Ridge": ("Lineal", float(linear_artifact["ridge"].predict(row)[0])),
+        "Regresión polinomial": ("Lineal", float(linear_artifact["poly"].predict(row)[0])),
+        "SVR lineal": ("SVR", float(load_artifact("svr_linear.joblib")["model"].predict(row)[0])),
+        "SVR RBF (modelo de esta página)": ("SVR", prediction),
+        "Gradient Boosting": ("Ensamble", float(base_row[1])),
+        "AdaBoost": ("Ensamble", float(base_row[2])),
+        "Stacking": ("Ensamble", float(stacking.predict(row)[0])),
+        "Voting soft": ("Ensamble", float(base_row.mean())),
+        "Voting ponderado": ("Ensamble", float(voting_artifact["weighted"].predict(row)[0])),
+        "Voting hard": ("Ensamble", float(np.median(base_row))),
+    }
+
+    change = prediction / lag24 - 1
+    deficit = prediction - generation
+    supply = (f"Con {generation:,} MW disponibles, <b>faltarían unos {deficit:,.0f} MW</b>: habría que programar cortes."
+              if deficit > 0 else f"Con {generation:,} MW disponibles, la generación cubriría la demanda "
+                                  f"(margen de {-deficit:,.0f} MW).")
+    st.html(f"""
+    <div class="pd-result">
+      <span class="nb-callout-label">Demanda pronosticada · {DAYS[day]} a las {hour:02d}:00</span>
+      <div class="pd-big">{prediction:,.0f} MW</div>
+      <p><b>{change:+.1%} respecto a ayer a la misma hora.</b> {supply}</p>
+    </div>
+    """)
+    st.html(f'<p class="nb-caption">Pronóstico del SVR RBF. Como referencia, el Stacking pronostica '
+            f'{sim_models["Stacking"][1]:,.0f} MW y el Voting hard {sim_models["Voting hard"][1]:,.0f} MW. El déficit es '
+            'una aproximación: la demanda publicada por PGCB ya incluye el load shedding estimado.</p>')

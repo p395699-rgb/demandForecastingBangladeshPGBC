@@ -25,7 +25,7 @@ from sklearn.tree import DecisionTreeRegressor
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ZIP_PATH = os.path.join(HERE, "", "pgcb+hourly+generation+dataset+(bangladesh).zip")
+ZIP_PATH = os.path.join(HERE, "pgcb+hourly+generation+dataset+(bangladesh).zip")
 TARGET = "demand_mw"
 # Límites físicos fijos (la capacidad de la red es < 17,000 MW); no se calculan con los datos, así que no hay fuga
 MAX_MW = {
